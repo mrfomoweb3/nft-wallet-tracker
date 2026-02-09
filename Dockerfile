@@ -19,6 +19,9 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
+# Install runtime dependencies for native modules
+RUN apk add --no-cache libc6-compat
+
 # Copy built files and production dependencies
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
