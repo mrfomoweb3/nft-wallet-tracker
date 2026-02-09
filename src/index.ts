@@ -1,0 +1,331 @@
+/**
+ * NFT Wallet Tracker & Copy-Buy Bot
+ * 
+ * Main entry point that orchestrates all modules
+ */
+
+import { join } from 'path';
+import { existsSync, mkdirSync } from 'fs';
+
+// Import modules
+import { configManager, Config } from './config/index.js';
+import { initLogger, logger } from './utils/logger.js';
+import { WalletManager } from './wallet/index.js';
+import { EthereumListener } from './blockchain/index.js';
+import { EventProcessor } from './events/index.js';
+import { TelegramBot } from './notifications/index.js';
+import { TradeExecutor } from './trading/index.js';
+import { KillSwitch, SpendingTracker, TransactionLogger } from './safety/index.js';
+import { UserDatabase } from './database/index.js';
+import { PriceTracker } from './alerts/index.js';
+import { NFTEvent, TradeResult } from './types/index.js';
+import { ethers } from 'ethers';
+
+// Data directory for persistent storage
+const DATA_DIR = process.env.DATA_PATH || './data';
+
+/**
+ * Main application class
+ */
+class NFTWalletTracker {
+    private config!: Config;
+    private walletManager!: WalletManager;
+    private ethereumListener!: EthereumListener;
+    private eventProcessor!: EventProcessor;
+    private telegramBot!: TelegramBot;
+    private tradeExecutor!: TradeExecutor;
+    private killSwitch!: KillSwitch;
+    private spendingTracker!: SpendingTracker;
+    private transactionLogger!: TransactionLogger;
+    private userDb!: UserDatabase;
+    private priceTracker!: PriceTracker;
+    private _running: boolean = false;
+    public get running(): boolean { return this._running; }
+
+    /**
+     * Initialize all modules
+     */
+    async initialize(): Promise<void> {
+        console.log('🚀 NFT Wallet Tracker Bot Starting...\n');
+
+        // Ensure data directory exists
+        this.ensureDataDir();
+
+        // Load configuration
+        this.config = configManager.load();
+
+        // Initialize logger
+        initLogger({
+            level: this.config.logging.level,
+            file: this.config.logging.file,
+            console: this.config.logging.console,
+        });
+
+        logger.info('Configuration loaded');
+
+        // Initialize components in order
+        this.initializeDatabase();
+        this.initializeSafety();
+        this.initializeWallet();
+        this.initializeBlockchain();
+        this.initializeNotifications();
+        this.initializeTrading();
+        this.initializeAlerts();
+
+        logger.info('All modules initialized');
+    }
+
+    /**
+     * Ensure data directory exists
+     */
+    private ensureDataDir(): void {
+        const dirs = [
+            DATA_DIR,
+            join(DATA_DIR, 'db'),
+            join(DATA_DIR, 'logs'),
+            join(DATA_DIR, 'wallets'),
+        ];
+
+        for (const dir of dirs) {
+            if (!existsSync(dir)) {
+                mkdirSync(dir, { recursive: true });
+            }
+        }
+    }
+
+    /**
+     * Initialize user database
+     */
+    private initializeDatabase(): void {
+        this.userDb = new UserDatabase(join(DATA_DIR, 'db', 'users.json'));
+    }
+
+    /**
+     * Initialize safety modules
+     */
+    private initializeSafety(): void {
+        this.killSwitch = new KillSwitch(join(DATA_DIR, 'killswitch.json'));
+        this.spendingTracker = new SpendingTracker(join(DATA_DIR, 'db', 'spending.db'));
+        this.transactionLogger = new TransactionLogger(join(DATA_DIR, 'db', 'transactions.db'));
+
+        // Kill switch events
+        this.killSwitch.on('triggered', (state) => {
+            logger.warn('Kill switch triggered', state);
+        });
+
+        this.killSwitch.on('reset', ({ resetBy }) => {
+            logger.info('Kill switch reset', { resetBy });
+        });
+    }
+
+    /**
+     * Initialize wallet manager
+     */
+    private initializeWallet(): void {
+        this.walletManager = new WalletManager(
+            join(DATA_DIR, 'wallets', 'encrypted.json'),
+            this.config.walletEncryptionPassword
+        );
+    }
+
+    /**
+     * Initialize blockchain listeners
+     */
+    private initializeBlockchain(): void {
+        // Event processor
+        this.eventProcessor = new EventProcessor();
+        this.eventProcessor.on('event', (event: NFTEvent) => this.handleNFTEvent(event));
+
+        // Ethereum listener
+        if (this.config.ethereum?.enabled) {
+            this.ethereumListener = new EthereumListener(this.config.ethereum);
+
+            // Forward events to processor
+            this.ethereumListener.on('nft_event', (event: NFTEvent) => {
+                this.eventProcessor.process(event);
+            });
+
+            this.ethereumListener.on('fatal_error', (error: Error) => {
+                logger.error('Fatal blockchain error', { error: error.message });
+            });
+        }
+    }
+
+    /**
+     * Initialize notification system
+     */
+    private initializeNotifications(): void {
+        // Create TelegramBot with UserDatabase and TransactionLogger
+        this.telegramBot = new TelegramBot(
+            this.config,
+            this.userDb,
+            this.transactionLogger
+        );
+
+        // Setup callbacks
+        this.telegramBot.onConfirmBuy = async (event: NFTEvent, quantity: number): Promise<TradeResult> => {
+            return this.tradeExecutor.executeTrade({
+                event,
+                quantity,
+                maxPrice: event.price,
+                slippageTolerance: this.config.trading.slippageTolerance,
+                requireConfirmation: false,
+            });
+        };
+
+        this.telegramBot.onToggleKillSwitch = (enable: boolean): void => {
+            if (enable) {
+                this.killSwitch.trigger('telegram_user', 'Manual trigger via Telegram');
+            } else {
+                this.killSwitch.reset('telegram_user');
+            }
+        };
+    }
+
+    /**
+     * Initialize trading engine
+     */
+    private initializeTrading(): void {
+        if (!this.config.trading.enabled || this.config.safety.readOnlyMode) {
+            logger.info('Trading is disabled');
+            return;
+        }
+
+        this.tradeExecutor = new TradeExecutor(
+            this.config,
+            this.walletManager,
+            this.killSwitch,
+            this.spendingTracker,
+            this.transactionLogger
+        );
+    }
+
+    /**
+     * Initialize price alerts
+     */
+    private initializeAlerts(): void {
+        this.priceTracker = new PriceTracker(this.userDb);
+
+        // Send alerts via telegram
+        this.priceTracker.on('price_alert', async (data) => {
+            const message = this.priceTracker.formatPriceAlert(data);
+            await this.telegramBot.sendPriceAlert(data.userId, message);
+        });
+    }
+
+    /**
+     * Handle NFT event from blockchain
+     */
+    private async handleNFTEvent(event: NFTEvent): Promise<void> {
+        logger.info('NFT Event Detected', {
+            type: event.type,
+            collection: event.contractAddress,
+            tokenId: event.tokenId,
+            wallet: event.trackedWallet,
+        });
+
+        // Check for whale alert (>1 ETH)
+        const priceEth = parseFloat(ethers.formatEther(event.price));
+        if (priceEth >= 1) {
+            await this.telegramBot.sendWhaleAlert(event);
+        }
+
+        // Send notification to users tracking this wallet
+        await this.telegramBot.sendEventNotification(event);
+
+        // Log the event
+        this.transactionLogger.log({
+            id: event.id,
+            type: 'copy_buy',
+            chain: event.chain,
+            contractAddress: event.contractAddress,
+            tokenId: event.tokenId,
+            price: event.price,
+            ourTxHash: event.txHash,
+            timestamp: event.timestamp,
+            status: 'pending',
+            triggerEvent: event,
+        });
+    }
+
+    /**
+     * Start all services
+     */
+    async start(): Promise<void> {
+        logger.info('Starting NFT Wallet Tracker...');
+
+        // Start blockchain listeners
+        if (this.ethereumListener) {
+            await this.ethereumListener.connect();
+            await this.ethereumListener.startListening();
+        }
+
+        // Start Telegram bot
+        await this.telegramBot.start();
+
+        // Start price tracker
+        this.priceTracker.start();
+
+        // Sync tracked wallets from all users
+        this.syncTrackedWallets();
+
+        this._running = true;
+        logger.info('NFT Wallet Tracker is running!');
+    }
+
+    /**
+     * Sync tracked wallets from user database to blockchain listener
+     */
+    private syncTrackedWallets(): void {
+        const wallets = this.userDb.getAllTrackedWallets();
+        for (const wallet of wallets) {
+            if (wallet.startsWith('0x') && this.ethereumListener) {
+                this.ethereumListener.addWallet(wallet);
+            }
+        }
+        logger.info(`Synced ${wallets.length} tracked wallets`);
+    }
+
+    /**
+     * Stop all services
+     */
+    async stop(): Promise<void> {
+        logger.info('Stopping NFT Wallet Tracker...');
+
+        this.priceTracker?.stop();
+        await this.telegramBot?.stop();
+        await this.ethereumListener?.disconnect();
+        this.transactionLogger?.close();
+        this.spendingTracker?.close();
+
+        this._running = false;
+        logger.info('Stopped');
+    }
+}
+
+/**
+ * Main entry point
+ */
+async function main(): Promise<void> {
+    const tracker = new NFTWalletTracker();
+
+    // Handle graceful shutdown
+    const shutdown = async () => {
+        console.log('\nShutting down...');
+        await tracker.stop();
+        process.exit(0);
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+
+    try {
+        await tracker.initialize();
+        await tracker.start();
+    } catch (error) {
+        console.error('Fatal error:', error);
+        process.exit(1);
+    }
+}
+
+main();
