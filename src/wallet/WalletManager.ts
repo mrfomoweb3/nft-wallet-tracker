@@ -1,15 +1,15 @@
-import sodium from 'sodium-native';
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { createModuleLogger } from '../utils/logger.js';
 
 const logger = createModuleLogger('wallet');
 
-// Constants for encryption
-const SALT_BYTES = sodium.crypto_pwhash_SALTBYTES;
-const KEY_BYTES = sodium.crypto_secretbox_KEYBYTES;
-const NONCE_BYTES = sodium.crypto_secretbox_NONCEBYTES;
-const MAC_BYTES = sodium.crypto_secretbox_MACBYTES;
+// Constants for encryption (AES-256-GCM)
+const SALT_BYTES = 32;
+const KEY_BYTES = 32;
+const NONCE_BYTES = 16; // IV for AES-GCM
+
 
 /**
  * Encrypted wallet data structure
@@ -22,6 +22,7 @@ interface EncryptedWallet {
     encryptedKey: string; // Base64 encoded
     salt: string; // Base64 encoded
     nonce: string; // Base64 encoded
+    authTag: string; // Base64 encoded
     createdAt: number;
 }
 
@@ -46,11 +47,10 @@ export interface DecryptedWallet {
  * WalletManager - Handles secure wallet storage and encryption
  * 
  * Security features:
- * - AES-256-GCM encryption via libsodium
- * - Argon2id key derivation
+ * - AES-256-GCM encryption via Node.js built-in crypto
+ * - scrypt key derivation 
  * - Unique salt and nonce per wallet
  * - Private keys only decrypted when needed
- * - Secure memory clearing after use
  */
 export class WalletManager {
     private storagePath: string;
@@ -101,66 +101,49 @@ export class WalletManager {
     }
 
     /**
-     * Derive encryption key from password using Argon2id
+     * Derive encryption key from password using scrypt
      */
     private deriveKey(salt: Buffer): Buffer {
-        const key = Buffer.alloc(KEY_BYTES);
-
-        sodium.crypto_pwhash(
-            key,
-            Buffer.from(this.password),
-            salt,
-            sodium.crypto_pwhash_OPSLIMIT_MODERATE,
-            sodium.crypto_pwhash_MEMLIMIT_MODERATE,
-            sodium.crypto_pwhash_ALG_ARGON2ID13
-        );
-
-        return key;
+        return scryptSync(this.password, salt, KEY_BYTES);
     }
 
     /**
      * Encrypt a private key
      */
-    private encryptKey(privateKey: string): { encrypted: Buffer; salt: Buffer; nonce: Buffer } {
-        const salt = Buffer.alloc(SALT_BYTES);
-        const nonce = Buffer.alloc(NONCE_BYTES);
-
-        sodium.randombytes_buf(salt);
-        sodium.randombytes_buf(nonce);
+    private encryptKey(privateKey: string): { encrypted: Buffer; salt: Buffer; nonce: Buffer; authTag: Buffer } {
+        const salt = randomBytes(SALT_BYTES);
+        const nonce = randomBytes(NONCE_BYTES);
 
         const key = this.deriveKey(salt);
-        const plaintext = Buffer.from(privateKey);
-        const ciphertext = Buffer.alloc(plaintext.length + MAC_BYTES);
+        const cipher = createCipheriv('aes-256-gcm', key, nonce);
 
-        sodium.crypto_secretbox_easy(ciphertext, plaintext, nonce, key);
+        const encrypted = Buffer.concat([
+            cipher.update(privateKey, 'utf-8'),
+            cipher.final()
+        ]);
 
-        // Clear sensitive buffers
-        sodium.sodium_memzero(key);
-        sodium.sodium_memzero(plaintext);
+        const authTag = cipher.getAuthTag();
 
-        return { encrypted: ciphertext, salt, nonce };
+        return { encrypted, salt, nonce, authTag };
     }
 
     /**
      * Decrypt a private key
      */
-    private decryptKey(encrypted: Buffer, salt: Buffer, nonce: Buffer): string {
+    private decryptKey(encrypted: Buffer, salt: Buffer, nonce: Buffer, authTag: Buffer): string {
         const key = this.deriveKey(salt);
-        const plaintext = Buffer.alloc(encrypted.length - MAC_BYTES);
+        const decipher = createDecipheriv('aes-256-gcm', key, nonce);
+        decipher.setAuthTag(authTag);
 
-        const success = sodium.crypto_secretbox_open_easy(plaintext, encrypted, nonce, key);
-
-        // Clear key immediately
-        sodium.sodium_memzero(key);
-
-        if (!success) {
+        try {
+            const decrypted = Buffer.concat([
+                decipher.update(encrypted),
+                decipher.final()
+            ]);
+            return decrypted.toString('utf-8');
+        } catch {
             throw new Error('Decryption failed - incorrect password or corrupted data');
         }
-
-        const result = plaintext.toString('utf-8');
-        sodium.sodium_memzero(plaintext);
-
-        return result;
     }
 
     /**
@@ -178,42 +161,45 @@ export class WalletManager {
         }
 
         // Encrypt the private key
-        const { encrypted, salt, nonce } = this.encryptKey(privateKey);
+        const { encrypted, salt, nonce, authTag } = this.encryptKey(privateKey);
 
-        const encryptedWallet: EncryptedWallet = {
-            version: 1,
+        // Store the encrypted wallet
+        const wallet: EncryptedWallet = {
+            version: 2, // Updated version for new crypto format
             address,
             chain,
             label,
             encryptedKey: encrypted.toString('base64'),
             salt: salt.toString('base64'),
             nonce: nonce.toString('base64'),
+            authTag: authTag.toString('base64'),
             createdAt: Date.now(),
         };
 
-        this.storage.wallets.push(encryptedWallet);
+        this.storage.wallets.push(wallet);
         this.saveStorage();
 
-        logger.info(`Added wallet: ${address}`, { chain, label });
+        logger.info(`Wallet added: ${address}`, { chain, label });
     }
 
     /**
      * Get a decrypted wallet by address
      */
-    getWallet(address: string): DecryptedWallet {
+    getWallet(address: string): DecryptedWallet | null {
         const wallet = this.storage.wallets.find(
             w => w.address.toLowerCase() === address.toLowerCase()
         );
 
         if (!wallet) {
-            throw new Error(`Wallet ${address} not found`);
+            return null;
         }
 
         const encrypted = Buffer.from(wallet.encryptedKey, 'base64');
         const salt = Buffer.from(wallet.salt, 'base64');
         const nonce = Buffer.from(wallet.nonce, 'base64');
+        const authTag = Buffer.from(wallet.authTag || '', 'base64');
 
-        const privateKey = this.decryptKey(encrypted, salt, nonce);
+        const privateKey = this.decryptKey(encrypted, salt, nonce, authTag);
 
         return {
             address: wallet.address,
@@ -224,14 +210,49 @@ export class WalletManager {
     }
 
     /**
-     * List all wallet addresses (without private keys)
+     * Get all wallet addresses (without decrypting)
      */
-    listWallets(): Array<{ address: string; chain: 'ethereum' | 'solana'; label?: string }> {
-        return this.storage.wallets.map(w => ({
-            address: w.address,
-            chain: w.chain,
-            label: w.label,
-        }));
+    getAddresses(): string[] {
+        return this.storage.wallets.map(w => w.address);
+    }
+
+    /**
+     * Get wallet info (without private key)
+     */
+    getWalletInfo(address: string): Omit<EncryptedWallet, 'encryptedKey' | 'salt' | 'nonce' | 'authTag'> | null {
+        const wallet = this.storage.wallets.find(
+            w => w.address.toLowerCase() === address.toLowerCase()
+        );
+
+        if (!wallet) {
+            return null;
+        }
+
+        return {
+            version: wallet.version,
+            address: wallet.address,
+            chain: wallet.chain,
+            label: wallet.label,
+            createdAt: wallet.createdAt,
+        };
+    }
+
+    /**
+     * Remove a wallet
+     */
+    removeWallet(address: string): boolean {
+        const initialLength = this.storage.wallets.length;
+        this.storage.wallets = this.storage.wallets.filter(
+            w => w.address.toLowerCase() !== address.toLowerCase()
+        );
+
+        if (this.storage.wallets.length < initialLength) {
+            this.saveStorage();
+            logger.info(`Wallet removed: ${address}`);
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -244,29 +265,46 @@ export class WalletManager {
     }
 
     /**
-     * Remove a wallet
+     * Get wallet count
      */
-    removeWallet(address: string): void {
-        const index = this.storage.wallets.findIndex(
-            w => w.address.toLowerCase() === address.toLowerCase()
-        );
-
-        if (index === -1) {
-            throw new Error(`Wallet ${address} not found`);
-        }
-
-        this.storage.wallets.splice(index, 1);
-        this.saveStorage();
-
-        logger.info(`Removed wallet: ${address}`);
+    getWalletCount(): number {
+        return this.storage.wallets.length;
     }
 
     /**
-     * Get the primary trading wallet
+     * Update wallet label
+     */
+    updateLabel(address: string, label: string): boolean {
+        const wallet = this.storage.wallets.find(
+            w => w.address.toLowerCase() === address.toLowerCase()
+        );
+
+        if (wallet) {
+            wallet.label = label;
+            this.saveStorage();
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Get the first available wallet for a chain
+     */
+    getDefaultWallet(chain: 'ethereum' | 'solana'): DecryptedWallet | null {
+        const wallet = this.storage.wallets.find(w => w.chain === chain);
+
+        if (!wallet) {
+            return null;
+        }
+
+        return this.getWallet(wallet.address);
+    }
+
+    /**
+     * Alias for getDefaultWallet - used by TradeExecutor
      */
     getPrimaryWallet(chain: 'ethereum' | 'solana'): DecryptedWallet | null {
-        const wallet = this.storage.wallets.find(w => w.chain === chain);
-        if (!wallet) return null;
-        return this.getWallet(wallet.address);
+        return this.getDefaultWallet(chain);
     }
 }
