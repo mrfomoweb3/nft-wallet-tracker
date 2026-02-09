@@ -3,6 +3,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Install build dependencies for native modules (sodium-native)
+RUN apk add --no-cache python3 make g++ libtool autoconf automake
+
 # Install dependencies
 COPY package*.json ./
 RUN npm ci
