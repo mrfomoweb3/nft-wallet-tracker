@@ -4,11 +4,14 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Install build dependencies for native modules (sodium-native)
-RUN apk add --no-cache python3 make g++ libtool autoconf automake
+RUN apk add --no-cache python3 make g++ libtool autoconf automake linux-headers
 
 # Install dependencies
 COPY package*.json ./
 RUN npm ci
+
+# Rebuild native modules for Alpine
+RUN npm rebuild sodium-native --build-from-source
 
 # Copy source and build
 COPY . .
@@ -20,7 +23,7 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 # Install runtime dependencies for native modules
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache libc6-compat libstdc++
 
 # Copy built files and production dependencies
 COPY --from=builder /app/dist ./dist
