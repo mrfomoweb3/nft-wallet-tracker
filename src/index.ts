@@ -181,6 +181,21 @@ class NFTWalletTracker {
                 this.killSwitch.reset('telegram_user');
             }
         };
+
+        // Wire wallet tracking to blockchain listener
+        this.telegramBot.onWalletAdded = (address: string): void => {
+            if (address.startsWith('0x') && this.ethereumListener) {
+                this.ethereumListener.addWallet(address);
+                logger.info('Wallet registered with blockchain listener', { address });
+            }
+        };
+
+        this.telegramBot.onWalletRemoved = (address: string): void => {
+            if (address.startsWith('0x') && this.ethereumListener) {
+                this.ethereumListener.removeWallet(address);
+                logger.info('Wallet unregistered from blockchain listener', { address });
+            }
+        };
     }
 
     /**

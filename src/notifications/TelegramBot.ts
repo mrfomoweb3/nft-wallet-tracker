@@ -41,6 +41,8 @@ export class TelegramBot {
     public onConfirmBuy?: (event: NFTEvent, quantity: number) => Promise<TradeResult>;
     public onCancelBuy?: (eventId: string) => void;
     public onToggleKillSwitch?: (enable: boolean) => void;
+    public onWalletAdded?: (address: string) => void;
+    public onWalletRemoved?: (address: string) => void;
 
     constructor(
         config: Config,
@@ -186,6 +188,8 @@ export class TelegramBot {
 
             const result = this.userDb.addWallet(ctx.from!.id, address);
             if (result.success) {
+                // Register with blockchain listener for real-time monitoring
+                if (this.onWalletAdded) this.onWalletAdded(address);
                 await ctx.reply(`✅ Now tracking:\n\`${address}\``, { parse_mode: 'Markdown' });
             } else {
                 await ctx.reply(`❌ ${result.error}`);
@@ -202,6 +206,11 @@ export class TelegramBot {
 
             const success = this.userDb.removeWallet(ctx.from!.id, address);
             if (success) {
+                // Check if any other user is still tracking this wallet
+                const stillTracked = this.userDb.getUsersTrackingWallet(address).length > 0;
+                if (!stillTracked && this.onWalletRemoved) {
+                    this.onWalletRemoved(address);
+                }
                 await ctx.reply(`✅ Stopped tracking:\n\`${address}\``, { parse_mode: 'Markdown' });
             } else {
                 await ctx.reply('❌ Wallet not found in your tracking list.');

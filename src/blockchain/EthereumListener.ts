@@ -17,6 +17,12 @@ const ERC1155_TRANSFER_BATCH = '0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e59
 // Zero address (indicates mint)
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
+// WETH contract (mainnet) - used for marketplace payment detection
+const WETH_CONTRACT = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+
+// ERC-20 Transfer event topic (same as ERC-721 but used for WETH payments)
+const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
 // Known marketplace contracts (mainnet)
 const MARKETPLACE_CONTRACTS: Record<string, Marketplace> = {
     '0x00000000000000ADc04C56Bf30aC9d3c0aAF14dC': 'opensea', // Seaport 1.5
@@ -182,9 +188,12 @@ export class EthereumListener extends BaseListener {
             // Determine event type
             const eventType = this.determineEventType(from, to, trackedWallet);
 
+            // Detect marketplace
+            const marketplace = this.detectMarketplace(tx.to || '', receipt.logs);
+
             // Filter out zero-value transfers (likely spam or internal transfers)
-            if (tx.value === 0n && eventType !== 'mint') {
-                // Could be a marketplace buy - check logs for payment
+            // But skip filtering for known marketplace transactions — payment may be via WETH
+            if (tx.value === 0n && eventType !== 'mint' && marketplace === 'unknown') {
                 const paymentValue = this.extractPaymentFromLogs(receipt.logs);
                 if (paymentValue === 0n) {
                     logger.debug('Filtered zero-value transfer', { txHash: log.transactionHash });
@@ -192,8 +201,7 @@ export class EthereumListener extends BaseListener {
                 }
             }
 
-            // Detect marketplace
-            const marketplace = this.detectMarketplace(tx.to || '', receipt.logs);
+            // Marketplace already detected above
 
             // Extract token ID
             const tokenId = isERC1155
@@ -315,10 +323,27 @@ export class EthereumListener extends BaseListener {
     /**
      * Extract payment value from transaction logs (for marketplace buys)
      */
-    private extractPaymentFromLogs(_logs: readonly Log[]): bigint {
-        // Look for WETH transfers or ETH value
-        // This is simplified - real implementation would decode marketplace-specific events
-        return 0n;
+    private extractPaymentFromLogs(logs: readonly Log[]): bigint {
+        let totalPayment = 0n;
+
+        for (const log of logs) {
+            // Check for WETH Transfer events (ERC-20 Transfer from WETH contract)
+            if (
+                log.address.toLowerCase() === WETH_CONTRACT &&
+                log.topics[0] === ERC20_TRANSFER_TOPIC &&
+                log.topics.length >= 3 &&
+                log.data.length >= 66
+            ) {
+                try {
+                    const value = BigInt(log.data.slice(0, 66));
+                    totalPayment += value;
+                } catch {
+                    // Skip malformed data
+                }
+            }
+        }
+
+        return totalPayment;
     }
 
     /**
