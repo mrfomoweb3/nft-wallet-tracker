@@ -9,6 +9,7 @@ import { PortfolioTracker } from '../portfolio/PortfolioTracker.js';
 import { CollectionStats } from '../stats/CollectionStats.js';
 import { SnipeMode } from '../trading/SnipeMode.js';
 import { TransactionLogger } from '../safety/TransactionLogger.js';
+import { EthereumListener } from '../blockchain/index.js';
 
 const logger = createModuleLogger('telegram');
 
@@ -36,6 +37,7 @@ export class TelegramBot {
     private collectionStats: CollectionStats;
     private snipeMode: SnipeMode;
     private transactionLogger: TransactionLogger;
+    private ethereumListener: EthereumListener | null = null;
 
     // Callbacks
     public onConfirmBuy?: (event: NFTEvent, quantity: number) => Promise<TradeResult>;
@@ -186,6 +188,9 @@ export class TelegramBot {
                 return;
             }
 
+            // Auto-register user if they haven't run /start
+            this.userDb.getOrCreateUser(ctx.from!.id, ctx.from?.username, ctx.from?.first_name);
+
             const result = this.userDb.addWallet(ctx.from!.id, address);
             if (result.success) {
                 // Register with blockchain listener for real-time monitoring
@@ -203,6 +208,9 @@ export class TelegramBot {
                 await ctx.reply('Usage: `/untrack 0x123...`', { parse_mode: 'Markdown' });
                 return;
             }
+
+            // Auto-register user if they haven't run /start
+            this.userDb.getOrCreateUser(ctx.from!.id, ctx.from?.username, ctx.from?.first_name);
 
             const success = this.userDb.removeWallet(ctx.from!.id, address);
             if (success) {
@@ -252,17 +260,36 @@ export class TelegramBot {
             );
         });
 
-        // /status - Bot status
+        // /status - Bot status with blockchain diagnostics
         this.bot.command('status', async (ctx) => {
             const user = this.userDb.getOrCreateUser(ctx.from!.id);
             const stats = this.userDb.getUserCount();
             const txStats = this.transactionLogger.getStats();
+
+            let ethStatus = '⚪ Not configured';
+            let blockInfo = '';
+            if (this.ethereumListener) {
+                const diag = this.ethereumListener.getDiagnostics();
+                ethStatus = diag.connected ? '🟢 Connected' : '🔴 Disconnected';
+                blockInfo =
+                    `\n📦 Blocks processed: ${diag.blocksProcessed}` +
+                    `\n🔢 Last block: ${diag.lastBlockNumber || 'none'}` +
+                    `\n🎯 Events detected: ${diag.eventsDetected}` +
+                    `\n👛 Wallets monitored: ${diag.trackedWalletCount}`;
+                if (diag.trackedWallets.length > 0) {
+                    blockInfo += `\n📋 Wallets: ${diag.trackedWallets.map(w => w.slice(0, 8) + '...').join(', ')}`;
+                }
+                if (diag.lastError) {
+                    blockInfo += `\n⚠️ Last error: ${diag.lastError.slice(0, 100)}`;
+                }
+            }
 
             await ctx.reply(
                 `📊 *Bot Status*\n\n` +
                 `👤 Your tier: ${user.tier}\n` +
                 `👛 Your wallets: ${user.wallets.length}\n` +
                 `🤖 Auto-buy: ${user.settings.autoBuyEnabled ? '🟢' : '🔴'}\n\n` +
+                `⛓ *Ethereum Listener:* ${ethStatus}${blockInfo}\n\n` +
                 `📈 *Stats:*\n` +
                 `Users: ${stats.total}\n` +
                 `Transactions: ${txStats.total}\n` +
@@ -646,5 +673,26 @@ export class TelegramBot {
 
     getStatus(): { running: boolean } {
         return { running: this.isRunning };
+    }
+
+    /**
+     * Set the Ethereum listener reference for /status diagnostics
+     */
+    setEthereumListener(listener: EthereumListener | undefined): void {
+        this.ethereumListener = listener || null;
+    }
+
+    /**
+     * Send a startup notification to all registered users
+     */
+    async sendStartupNotification(message: string): Promise<void> {
+        const users = Object.values(this.userDb['data'].users) as User[];
+        for (const user of users) {
+            try {
+                await this.bot.api.sendMessage(user.id.toString(), message, { parse_mode: 'Markdown' });
+            } catch (e) {
+                logger.error('Failed to send startup notification', { userId: user.id });
+            }
+        }
     }
 }

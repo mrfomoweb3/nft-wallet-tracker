@@ -271,9 +271,15 @@ class NFTWalletTracker {
         logger.info('Starting NFT Wallet Tracker...');
 
         // Start blockchain listeners
+        let ethConnected = false;
         if (this.ethereumListener) {
-            await this.ethereumListener.connect();
-            await this.ethereumListener.startListening();
+            try {
+                await this.ethereumListener.connect();
+                await this.ethereumListener.startListening();
+                ethConnected = true;
+            } catch (error) {
+                logger.error('Failed to start Ethereum listener', { error: (error as Error).message });
+            }
         }
 
         // Start Telegram bot
@@ -285,8 +291,26 @@ class NFTWalletTracker {
         // Sync tracked wallets from all users
         this.syncTrackedWallets();
 
+        // Provide listener reference for /status diagnostics
+        this.telegramBot.setEthereumListener(this.ethereumListener);
+
         this._running = true;
         logger.info('NFT Wallet Tracker is running!');
+
+        // Send startup notification via Telegram
+        const walletCount = this.userDb.getAllTrackedWallets().length;
+        const startupMessage =
+            `🚀 *Bot Started Successfully*\n\n` +
+            `⛓ Ethereum: ${ethConnected ? '🟢 Connected' : '🔴 Disconnected'}\n` +
+            `👛 Tracked wallets: ${walletCount}\n` +
+            `📡 Listening for NFT events...\n\n` +
+            `Use /status for live diagnostics.`;
+
+        try {
+            await this.telegramBot.sendStartupNotification(startupMessage);
+        } catch (e) {
+            logger.error('Failed to send startup notification', { error: e });
+        }
     }
 
     /**

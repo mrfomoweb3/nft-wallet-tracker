@@ -44,6 +44,12 @@ export class EthereumListener extends BaseListener {
     private processedTxHashes: Set<string> = new Set();
     private processedTxExpiry: Map<string, number> = new Map();
 
+    // Diagnostics
+    private blocksProcessed: number = 0;
+    private lastBlockNumber: number = 0;
+    private eventsDetected: number = 0;
+    private lastError: string | null = null;
+
     constructor(config: EthereumConfig) {
         super('ethereum');
         this.config = config;
@@ -119,7 +125,20 @@ export class EthereumListener extends BaseListener {
         this.provider.on('block', async (blockNumber: number) => {
             try {
                 await this.processBlock(blockNumber);
+                this.blocksProcessed++;
+                this.lastBlockNumber = blockNumber;
+
+                // Log every 10th block to confirm liveness
+                if (this.blocksProcessed % 10 === 1) {
+                    logger.info('Block processing alive', {
+                        blockNumber,
+                        totalProcessed: this.blocksProcessed,
+                        trackedWallets: this.trackedWallets.size,
+                        eventsDetected: this.eventsDetected,
+                    });
+                }
             } catch (error) {
+                this.lastError = (error as Error).message;
                 logger.error('Error processing block', { blockNumber, error });
             }
         });
@@ -127,7 +146,7 @@ export class EthereumListener extends BaseListener {
         // Cleanup old processed transactions periodically
         setInterval(() => this.cleanupProcessedTx(), 60000);
 
-        logger.info('Ethereum listener started');
+        logger.info('Ethereum listener started, waiting for blocks...');
     }
 
     /**
@@ -232,6 +251,7 @@ export class EthereumListener extends BaseListener {
                 marketplace: marketplace,
             };
 
+            this.eventsDetected++;
             this.emitNFTEvent(event);
 
         } catch (error) {
@@ -379,5 +399,28 @@ export class EthereumListener extends BaseListener {
                 this.processedTxExpiry.delete(key);
             }
         }
+    }
+
+    /**
+     * Get diagnostic info for /status command
+     */
+    getDiagnostics(): {
+        connected: boolean;
+        blocksProcessed: number;
+        lastBlockNumber: number;
+        eventsDetected: number;
+        trackedWalletCount: number;
+        trackedWallets: string[];
+        lastError: string | null;
+    } {
+        return {
+            connected: this.isConnected,
+            blocksProcessed: this.blocksProcessed,
+            lastBlockNumber: this.lastBlockNumber,
+            eventsDetected: this.eventsDetected,
+            trackedWalletCount: this.trackedWallets.size,
+            trackedWallets: Array.from(this.trackedWallets),
+            lastError: this.lastError,
+        };
     }
 }
