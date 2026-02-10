@@ -323,9 +323,31 @@ async function main(): Promise<void> {
     try {
         await tracker.initialize();
         await tracker.start();
-    } catch (error) {
-        console.error('Fatal error:', error);
-        process.exit(1);
+    } catch (error: any) {
+        if (error.constructor.name === 'ZodError') {
+            const issues = (error as any).issues || [];
+            console.error('\n❌ CONFIGURATION ERROR: The bot failed to start because of missing environment variables.\n');
+            console.error('Please add the following variables to your Railway Project Settings:');
+
+            const missingVars = issues.map((issue: any) => {
+                const path = issue.path.join('.');
+                if (path === 'telegram.botToken') return 'TELEGRAM_BOT_TOKEN';
+                if (path === 'telegram.chatId') return 'TELEGRAM_CHAT_ID';
+                if (path === 'walletEncryptionPassword') return 'WALLET_ENCRYPTION_PASSWORD';
+                if (path === 'ethereum.rpcUrl') return 'ETH_RPC_URL';
+                return path;
+            });
+
+            // unique
+            const uniqueVars = [...new Set(missingVars)];
+
+            uniqueVars.forEach((v: unknown) => console.error(`   - ${v}`));
+            console.error('\n📝 You can find these values in the `railway.env.example` file I created for you.\n');
+            process.exit(1);
+        } else {
+            console.error('Fatal error:', error);
+            process.exit(1);
+        }
     }
 }
 
