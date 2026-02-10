@@ -8,45 +8,61 @@ export function formatNotification(event: NFTEvent): string {
     const chainEmoji = getChainEmoji(event.chain);
     const marketplaceLabel = formatMarketplace(event.marketplace);
 
+    // Header: action type + collection name
+    const collectionName = event.metadata?.collection || 'Unknown Collection';
+    const nftName = event.metadata?.name || `#${event.tokenId}`;
+
     const lines = [
         `${emoji} *${formatEventType(event.type).toUpperCase()}* ${chainEmoji}`,
+        `━━━━━━━━━━━━━━━━━━━━`,
+        `📚 *${collectionName}*`,
+        `🎨 ${nftName}`,
         '',
-        `📍 *Wallet:* \`${shortenAddress(event.trackedWallet)}\``,
-        `🎨 *Contract:* \`${shortenAddress(event.contractAddress)}\``,
-        `🔢 *Token ID:* ${event.tokenId}`,
     ];
 
-    // Add price for buys/sells/mints with value
+    // Price section
     if (event.price > 0n) {
         lines.push(`💰 *Price:* ${event.priceFormatted}`);
     }
 
-    // Add quantity for ERC-1155
+    // Quantity for ERC-1155
     if (event.quantity > 1) {
         lines.push(`📦 *Quantity:* ${event.quantity}`);
     }
 
-    // Add marketplace
+    // Marketplace
     if (event.marketplace !== 'unknown') {
-        lines.push(`🏪 *Marketplace:* ${marketplaceLabel}`);
+        lines.push(`🏪 *Via:* ${marketplaceLabel}`);
     }
 
-    // Add metadata if available
-    if (event.metadata?.name) {
-        lines.push(`📝 *Name:* ${event.metadata.name}`);
-    }
-    if (event.metadata?.collection) {
-        lines.push(`📚 *Collection:* ${event.metadata.collection}`);
-    }
+    // Token standard
+    lines.push(`📋 *Standard:* ${event.tokenStandard}`);
 
-    // Add links
     lines.push('');
-    lines.push(`🔗 [View Transaction](${getExplorerTxUrl(event.chain, event.txHash)})`);
-    lines.push(`🔗 [View NFT](${getExplorerNFTUrl(event.chain, event.contractAddress, event.tokenId)})`);
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
 
-    // Add timestamp
+    // Wallet info
+    lines.push(`👛 *Tracked Wallet:* \`${shortenAddress(event.trackedWallet)}\``);
+
+    // From/To
+    if (event.type === 'buy' || event.type === 'mint') {
+        lines.push(`📥 *Bought by:* \`${shortenAddress(event.to)}\``);
+    } else if (event.type === 'sell') {
+        lines.push(`📤 *Sold by:* \`${shortenAddress(event.from)}\``);
+        lines.push(`📥 *Bought by:* \`${shortenAddress(event.to)}\``);
+    }
+
+    // Contract
+    lines.push(`📍 *Contract:* \`${shortenAddress(event.contractAddress)}\``);
+
+    // Links section
     lines.push('');
-    lines.push(`⏰ ${formatTimestamp(event.timestamp)}`);
+    lines.push(`🔗 [Etherscan](${getExplorerTxUrl(event.chain, event.txHash)}) • [OpenSea](${getExplorerNFTUrl(event.chain, event.contractAddress, event.tokenId)})`);
+
+    // Speed indicator
+    const delayMs = Date.now() - event.timestamp;
+    const delaySec = Math.max(0, Math.round(delayMs / 1000));
+    lines.push(`⚡ Alert sent ${delaySec}s after transaction`);
 
     return lines.join('\n');
 }
@@ -155,19 +171,6 @@ function formatMarketplace(marketplace: Marketplace): string {
 function shortenAddress(address: string): string {
     if (address.length <= 12) return address;
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-/**
- * Format timestamp
- */
-function formatTimestamp(timestamp: number): string {
-    return new Date(timestamp).toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-    });
 }
 
 /**

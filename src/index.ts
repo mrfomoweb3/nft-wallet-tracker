@@ -20,6 +20,7 @@ import { UserDatabase } from './database/index.js';
 import { PriceTracker } from './alerts/index.js';
 import { NFTEvent, TradeResult } from './types/index.js';
 import { ethers } from 'ethers';
+import { NFTMetadataFetcher } from './utils/NFTMetadataFetcher.js';
 
 // Data directory for persistent storage
 const DATA_DIR = process.env.DATA_PATH || './data';
@@ -39,6 +40,7 @@ class NFTWalletTracker {
     private transactionLogger!: TransactionLogger;
     private userDb!: UserDatabase;
     private priceTracker!: PriceTracker;
+    private metadataFetcher!: NFTMetadataFetcher;
     private _running: boolean = false;
     public get running(): boolean { return this._running; }
 
@@ -222,6 +224,10 @@ class NFTWalletTracker {
     private initializeAlerts(): void {
         this.priceTracker = new PriceTracker(this.userDb);
 
+        // Initialize metadata fetcher for enriching NFT event alerts
+        const alchemyKey = this.config.ethereum?.rpcUrl?.match(/alchemy\.com\/v2\/([a-zA-Z0-9_-]+)/)?.[1];
+        this.metadataFetcher = new NFTMetadataFetcher(alchemyKey);
+
         // Send alerts via telegram
         this.priceTracker.on('price_alert', async (data) => {
             const message = this.priceTracker.formatPriceAlert(data);
@@ -239,6 +245,27 @@ class NFTWalletTracker {
             tokenId: event.tokenId,
             wallet: event.trackedWallet,
         });
+
+        // Fetch NFT metadata in parallel (non-blocking for speed)
+        try {
+            const metadata = await this.metadataFetcher.getMetadata(
+                event.contractAddress,
+                event.tokenId
+            );
+            event.metadata = {
+                name: metadata.name,
+                collection: metadata.collection,
+                image: metadata.imageUrl,
+                description: metadata.description,
+            };
+            logger.info('NFT metadata enriched', {
+                name: metadata.name,
+                collection: metadata.collection,
+                floorPrice: metadata.floorPrice,
+            });
+        } catch (e) {
+            logger.error('Metadata fetch failed, sending alert without metadata', { error: e });
+        }
 
         // Check for whale alert (>1 ETH)
         const priceEth = parseFloat(ethers.formatEther(event.price));
