@@ -47,6 +47,7 @@ class NFTWalletTracker {
      */
     async initialize(): Promise<void> {
         console.log('🚀 NFT Wallet Tracker Bot Starting...\n');
+        console.log('Environment variables present:', Object.keys(process.env).filter(k => k.startsWith('ETH') || k.startsWith('TELEGRAM') || k.startsWith('WALLET') || k.startsWith('RAILWAY')));
 
         // Ensure data directory exists
         this.ensureDataDir();
