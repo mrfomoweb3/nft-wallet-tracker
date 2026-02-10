@@ -467,6 +467,57 @@ export class TelegramBot {
             await ctx.reply(message, { parse_mode: 'Markdown' });
         });
 
+        // /test - Simulate a test NFT event to verify the alert pipeline
+        this.bot.command('test', async (ctx) => {
+            const user = this.userDb.getOrCreateUser(ctx.from!.id, ctx.from?.username, ctx.from?.first_name);
+
+            // Use the user's first tracked wallet, or a famous wallet
+            const testWallet = user.wallets[0] || '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+
+            await ctx.reply('🧪 *Sending test alert...*\nThis simulates an NFT purchase by your tracked wallet.', { parse_mode: 'Markdown' });
+
+            // Create a realistic fake event
+            const testEvent: NFTEvent = {
+                id: `test-${Date.now()}`,
+                type: 'buy',
+                chain: 'ethereum',
+                txHash: '0x' + 'a'.repeat(64),
+                blockNumber: 21000000,
+                timestamp: Date.now(),
+                trackedWallet: testWallet,
+                from: '0x0000000000000000000000000000000000000000',
+                to: testWallet,
+                contractAddress: '0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D', // BAYC
+                tokenId: '4562',
+                tokenStandard: 'ERC721',
+                quantity: 1,
+                price: BigInt('32500000000000000000'), // 32.5 ETH
+                priceFormatted: '32.5 ETH',
+                currency: 'ETH',
+                marketplace: 'opensea',
+                metadata: {
+                    name: 'Bored Ape #4562',
+                    collection: 'Bored Ape Yacht Club',
+                },
+            };
+
+            // Send through the real notification pipeline
+            const message = formatNotification(testEvent);
+            try {
+                const keyboard = new InlineKeyboard()
+                    .text('✅ Buy', `confirm_buy:${testEvent.id}`)
+                    .text('❌ Skip', `cancel_buy:${testEvent.id}`);
+
+                await this.bot.api.sendMessage(ctx.from!.id.toString(), message, {
+                    parse_mode: 'Markdown',
+                    reply_markup: keyboard,
+                });
+                await ctx.reply('✅ Test alert sent! If you see it above, the notification pipeline is working.');
+            } catch (e) {
+                await ctx.reply(`❌ Test failed: ${(e as Error).message}`);
+            }
+        });
+
         // /killswitch
         this.bot.command('killswitch', async (ctx) => {
             const keyboard = new InlineKeyboard()
