@@ -27,8 +27,11 @@ const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a116
 const MARKETPLACE_CONTRACTS: Record<string, Marketplace> = {
     '0x00000000000000ADc04C56Bf30aC9d3c0aAF14dC': 'opensea', // Seaport 1.5
     '0x00000000000001ad428e4906aE43D8F9852d0dD6': 'opensea', // Seaport 1.6
+    '0x0000000000000068F116a894984e2DB1123eB395': 'opensea', // Seaport 1.6 (conduit)
+    '0x00000000006c3852cbEf3e08E8dF289169EdE581': 'opensea', // Seaport 1.1
     '0x39da41747a83aeE658334415666f3EF92DD0D541': 'blur',     // Blur pool
     '0x29469395eAf6f95920E59F858042f0e28D98a20B': 'blur',     // Blur v2
+    '0xb2ecfE4E4D61f8790bbb9DE2D1259B9e2410CEA5': 'blur',     // Blur v3
     '0x59728544B08AB483533076417FbBB2fD0B17CE3a': 'looksrare',
     '0x74312363e45DCaBA76c59ec49a7Aa8A65a67EeD3': 'x2y2',
 };
@@ -182,9 +185,22 @@ export class EthereumListener extends BaseListener {
      */
     private async processLog(log: Log): Promise<void> {
         try {
-            // Check if this transaction involves a tracked wallet
-            const from = this.extractAddress(log.topics[1]);
-            const to = this.extractAddress(log.topics[2]);
+            // Determine if it's ERC-721 or ERC-1155 FIRST (affects topic layout)
+            const isERC1155 = log.topics[0] === ERC1155_TRANSFER_SINGLE || log.topics[0] === ERC1155_TRANSFER_BATCH;
+
+            // Extract from/to based on token standard
+            // ERC-721 Transfer(from, to, tokenId)         → topics[1]=from, topics[2]=to
+            // ERC-1155 TransferSingle(operator, from, to, id, value) → topics[1]=operator, topics[2]=from, topics[3]=to
+            let from: string;
+            let to: string;
+
+            if (isERC1155) {
+                from = this.extractAddress(log.topics[2]);
+                to = this.extractAddress(log.topics[3]);
+            } else {
+                from = this.extractAddress(log.topics[1]);
+                to = this.extractAddress(log.topics[2]);
+            }
 
             const trackedWallet = this.isTracked(from) ? from : this.isTracked(to) ? to : null;
             if (!trackedWallet) return;
@@ -193,9 +209,6 @@ export class EthereumListener extends BaseListener {
             const dedupKey = `${log.transactionHash}-${log.index}`;
             if (this.isProcessed(dedupKey)) return;
             this.markProcessed(dedupKey);
-
-            // Determine if it's ERC-721 or ERC-1155
-            const isERC1155 = log.topics[0] === ERC1155_TRANSFER_SINGLE || log.topics[0] === ERC1155_TRANSFER_BATCH;
 
             // Get transaction details for price info
             const tx = await this.provider!.getTransaction(log.transactionHash);
