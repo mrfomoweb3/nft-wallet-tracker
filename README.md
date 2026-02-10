@@ -1,109 +1,93 @@
-# NFT Wallet Tracker & Copy-Buy Bot
+# NFT Wallet Tracker & Copy-Buy Bot 🚀
 
-A production-grade bot for tracking NFT wallet activity and automated copy-buying with Telegram notifications.
+A production-grade, multi-user Telegram bot for tracking NFT wallet activity, portfolio values, and automated copy-buying.
 
-## Features
+![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-43853D?style=for-the-badge&logo=node.js&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2CA5E0?style=for-the-badge&logo=docker&logoColor=white)
 
-- 🔍 **Real-time Wallet Tracking** - Monitor any Ethereum wallet for NFT activity
-- 🆕 **Mint Detection** - Instant alerts when tracked wallets mint NFTs
-- 💰 **Buy/Sell Detection** - Track purchases and sales on major marketplaces
-- 📱 **Telegram Notifications** - Rich formatted alerts with transaction links
-- 🤖 **Copy-Buy Automation** - Optionally auto-buy NFTs when tracked wallets do
-- 🔒 **Security First** - Encrypted wallet storage, kill switch, spending limits
+## ✨ Features
 
-## Quick Start
+- **Multi-User Support**: Individual accounts, settings, and wallet lists for every user.
+- **Subscription Tiers**: Free and Premium tiers with different limits and feature sets.
+- **Real-time Tracking**: Monitor Ethereum wallets for Mints, Buys, Sells, and Transfers.
+- **Price Alerts** (Premium): Get notified when collection floor prices hit your target.
+- **Snipe Mode** (Premium): Auto-buy listings below a specific price.
+- **Portfolio Tracking** (Premium): View estimated value of NFT holdings.
+- **Whale Alerts**: Global alerts for high-value transactions (>1 ETH).
+- **Gas Tracker**: Real-time ETH gas prices.
+- **Copy-Trading**: Auto-buy NFTs when a tracked wallet buys (optional).
+- **Security**: AES-256-GCM encryption for keys, Kill Switch, and Spending Limits.
 
-### 1. Prerequisites
+## 🤖 Telegram Commands
 
-- Node.js 20+
-- Redis (for job queue)
-- Ethereum RPC endpoint (Alchemy, Infura, etc.)
-- Telegram Bot Token (from @BotFather)
+| Command | Tier | Description |
+|---------|------|-------------|
+| `/start` | All | Register and see welcome message |
+| `/help` | All | View all available commands |
+| `/tier` | All | Check your current subscription status |
+| `/track <address>` | All | Track a wallet (e.g., `/track 0x123...`) |
+| `/untrack <address>` | All | Stop tracking a wallet |
+| `/wallets` | All | List your tracked wallets |
+| `/autobuy` | All | Toggle auto-buy functionality on/off |
+| `/status` | All | View bot status and system stats |
+| `/gas` | All | View current gas prices |
+| `/stats <slug>` | All | Get collection stats (e.g., `/stats bayc`) |
+| `/history` | All | View recent transaction history |
+| `/killswitch` | All | Emergency stop for all trading |
+| `/portfolio` | **Premium** | View your NFT portfolio value |
+| `/alert <slug> <%>` | **Premium** | Set floor price alert (e.g., `/alert bayc -5`) |
+| `/snipe <slug> <eth>`| **Premium** | Set auto-buy target (e.g., `/snipe bayc 10.5`) |
 
-### 2. Installation
+## 🚀 Deployment
 
-```bash
-cd "NFT Kitchen"
-npm install
-```
+### Railway (Recommended)
 
-### 3. Configuration
+This project is optimized for [Railway](https://railway.app).
 
-```bash
-cp .env.example .env
-```
+1. **Install CLI**: `npm install -g @railway/cli`
+2. **Login**: `railway login`
+3. **Init**: `railway init`
+4. **Deploy**: `railway up`
 
-Edit `.env` with your settings:
+**Required Environment Variables:**
 
-```env
-# Required
-ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
-ETH_WS_URL=wss://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_chat_id
-WALLET_ENCRYPTION_PASSWORD=your_strong_password_32chars
+| Variable | Description |
+|----------|-------------|
+| `ETH_RPC_URL` | HTTP provider URL (Alchemy/Infura) |
+| `ETH_WS_URL` | WebSocket provider URL (Alchemy/Infura) |
+| `TELEGRAM_BOT_TOKEN` | Token from @BotFather |
+| `TELEGRAM_CHAT_ID` | Your Admin Chat ID |
+| `WALLET_ENCRYPTION_PASSWORD` | Min 16 chars (for securing keys) |
 
-# Optional - Wallets to track (comma-separated)
-TRACKED_WALLETS=0x123...,0x456...
-```
+### Local Development
 
-### 4. Run
+1. **Clone & Install**:
+   ```bash
+   git clone <repo-url>
+   cd nft-wallet-tracker
+   npm install
+   ```
 
-```bash
-# Development
-npm run dev
+2. **Configure**:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your keys
+   ```
 
-# Production
-npm run build
-npm start
-```
+3. **Run**:
+   ```bash
+   npm run dev
+   ```
 
-## Telegram Commands
+## 🛠 Architecture
 
-| Command | Description |
-|---------|-------------|
-| `/start` | Welcome message and help |
-| `/status` | Bot status and statistics |
-| `/track 0x...` | Add wallet to track |
-| `/untrack 0x...` | Remove wallet from tracking |
-| `/wallets` | List tracked wallets |
-| `/killswitch` | Emergency trading stop |
-| `/settings` | View current settings |
+- **Core**: Node.js + TypeScript
+- **Database**: Local JSON storage (no external DB required for basic setup)
+- **Blockchain**: `ethers.js` v6 + `viem`
+- **APIs**: Alchemy (Portfolio), Reservoir (Prices), OpenSea (Stats)
+- **Security**: Node.js `crypto` module (scrypt + AES-256-GCM)
 
-## Architecture
-
-```
-src/
-├── index.ts              # Main entry point
-├── config/               # Configuration & validation
-├── wallet/               # Encrypted wallet storage
-├── blockchain/           # WebSocket listeners
-├── events/               # Event processing & filtering
-├── notifications/        # Telegram bot
-├── trading/              # Copy-buy execution
-├── safety/               # Kill switch, limits, logging
-└── utils/                # Logger, retry utilities
-```
-
-## Safety Features
-
-- ✅ **Read-only mode** (default) - Notifications only, no trading
-- ✅ **Kill switch** - Instantly stop all trading
-- ✅ **Spending caps** - Per-transaction and daily limits
-- ✅ **Slippage protection** - Max price deviation allowed
-- ✅ **Encrypted keys** - AES-256-GCM with Argon2id
-- ✅ **Full audit log** - All transactions recorded
-
-## Configuration Options
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `TRADING_ENABLED` | `false` | Enable copy-buy trading |
-| `READ_ONLY_MODE` | `true` | Notifications only |
-| `MAX_SPEND_PER_TX` | `0.5` | Max ETH per transaction |
-| `MAX_DAILY_SPEND` | `2.0` | Max ETH per day |
-| `SLIPPAGE_TOLERANCE` | `0.05` | 5% max slippage |
-
-## License
+## 📄 License
 
 MIT
