@@ -88,6 +88,15 @@ class ConfigManager {
             };
         }
 
+        // Discord config
+        if (process.env.DISCORD_BOT_TOKEN) {
+            config.discord = {
+                botToken: process.env.DISCORD_BOT_TOKEN,
+                clientId: process.env.DISCORD_CLIENT_ID || '',
+                guildId: process.env.DISCORD_GUILD_ID || undefined,
+            };
+        }
+
         // Safety config
         config.safety = {
             killSwitchEnabled: process.env.KILL_SWITCH_ENABLED !== 'false',

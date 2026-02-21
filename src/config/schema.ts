@@ -42,6 +42,13 @@ const telegramConfigSchema = z.object({
     allowedUserIds: z.array(z.number()).optional(),
 });
 
+// Discord configuration
+const discordConfigSchema = z.object({
+    botToken: z.string().min(1),
+    clientId: z.string().min(1),
+    guildId: z.string().optional(),
+});
+
 // Safety configuration
 const safetyConfigSchema = z.object({
     killSwitchEnabled: z.boolean().default(true),
@@ -71,6 +78,7 @@ export const configSchema = z.object({
 
     // Notifications
     telegram: telegramConfigSchema,
+    discord: discordConfigSchema.optional(),
 
     // Safety
     safety: safetyConfigSchema.default({}),
@@ -91,6 +99,7 @@ export type EthereumConfig = z.infer<typeof ethereumConfigSchema>;
 export type SolanaConfig = z.infer<typeof solanaConfigSchema>;
 export type TradingConfig = z.infer<typeof tradingConfigSchema>;
 export type TelegramConfig = z.infer<typeof telegramConfigSchema>;
+export type DiscordConfig = z.infer<typeof discordConfigSchema>;
 export type SafetyConfig = z.infer<typeof safetyConfigSchema>;
 export type LoggingConfig = z.infer<typeof loggingConfigSchema>;
 
