@@ -7,9 +7,11 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:discord": "tsx watch src/index-discord.ts",
+    "dev:both": "tsx watch src/index-both.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "start:discord": "node dist/index-discord.js",
+    "start:both": "node dist/index-both.js",
     "test": "vitest",
     "test:coverage": "vitest --coverage",
     "lint": "eslint src --ext .ts",
