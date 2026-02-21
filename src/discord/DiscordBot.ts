@@ -200,15 +200,15 @@ export class DiscordBot {
                 case 'killswitch': return await this.cmdKillswitch(interaction);
                 case 'test': return await this.cmdTest(interaction);
                 default:
-                    await interaction.reply({ content: '❓ Unknown command.', ephemeral: true });
+                    await interaction.reply({ content: '❓ Unknown command.', flags: ['Ephemeral'] });
             }
         } catch (e) {
             logger.error('Command error', { command: name, error: e });
             const errorMsg = '❌ An error occurred.';
             if (interaction.replied || interaction.deferred) {
-                await interaction.followUp({ content: errorMsg, ephemeral: true }).catch(() => { });
+                await interaction.followUp({ content: errorMsg, flags: ['Ephemeral'] }).catch(() => { });
             } else {
-                await interaction.reply({ content: errorMsg, ephemeral: true }).catch(() => { });
+                await interaction.reply({ content: errorMsg, flags: ['Ephemeral'] }).catch(() => { });
             }
         }
     }
@@ -303,7 +303,7 @@ export class DiscordBot {
         const address = interaction.options.getString('address', true).trim();
 
         if (!address.match(/^0x[a-fA-F0-9]{40}$/)) {
-            await interaction.reply({ content: '❌ Invalid Ethereum address format.', ephemeral: true });
+            await interaction.reply({ content: '❌ Invalid Ethereum address format.', flags: ['Ephemeral'] });
             return;
         }
 
@@ -315,7 +315,7 @@ export class DiscordBot {
             if (this.onWalletAdded) this.onWalletAdded(address);
             await interaction.reply({ content: `✅ Now tracking:\n\`${address}\`` });
         } else {
-            await interaction.reply({ content: `❌ ${result.error}`, ephemeral: true });
+            await interaction.reply({ content: `❌ ${result.error}`, flags: ['Ephemeral'] });
         }
     }
 
@@ -333,7 +333,7 @@ export class DiscordBot {
             if (!stillTracked && this.onWalletRemoved) this.onWalletRemoved(address);
             await interaction.reply({ content: `✅ Stopped tracking:\n\`${address}\`` });
         } else {
-            await interaction.reply({ content: '❌ Wallet not found in your tracking list.', ephemeral: true });
+            await interaction.reply({ content: '❌ Wallet not found in your tracking list.', flags: ['Ephemeral'] });
         }
     }
 
@@ -473,12 +473,12 @@ export class DiscordBot {
         const user = this.userDb.getOrCreateUser(userId);
 
         if (user.tier !== 'premium') {
-            await interaction.reply({ content: '⭐ Portfolio tracking is a Premium feature.\n\nUse `/upgrade` to unlock!', ephemeral: true });
+            await interaction.reply({ content: '⭐ Portfolio tracking is a Premium feature.\n\nUse `/upgrade` to unlock!', flags: ['Ephemeral'] });
             return;
         }
 
         if (user.wallets.length === 0) {
-            await interaction.reply({ content: '📭 No wallets to show portfolio for.\n\nUse `/track` first.', ephemeral: true });
+            await interaction.reply({ content: '📭 No wallets to show portfolio for.\n\nUse `/track` first.', flags: ['Ephemeral'] });
             return;
         }
 
@@ -517,7 +517,7 @@ export class DiscordBot {
         const user = this.userDb.getOrCreateUser(userId);
 
         if (user.tier !== 'premium') {
-            await interaction.reply({ content: '⭐ Price alerts are a Premium feature.\n\nUse `/upgrade` to unlock!', ephemeral: true });
+            await interaction.reply({ content: '⭐ Price alerts are a Premium feature.\n\nUse `/upgrade` to unlock!', flags: ['Ephemeral'] });
             return;
         }
 
@@ -527,20 +527,20 @@ export class DiscordBot {
 
         if (off) {
             const removed = this.userDb.removePriceAlert(userId, collection);
-            await interaction.reply({ content: removed ? `✅ Alert removed for ${collection}` : '❌ No alert found.', ephemeral: true });
+            await interaction.reply({ content: removed ? `✅ Alert removed for ${collection}` : '❌ No alert found.', flags: ['Ephemeral'] });
             return;
         }
 
         if (percent == null) {
             await interaction.reply({
                 content: '**Price Alerts**\n\nUsage: `/alert collection:bayc percent:10`\nRemove: `/alert collection:bayc off:True`',
-                ephemeral: true,
+                flags: ['Ephemeral'],
             });
             return;
         }
 
         if (percent <= 0 || percent > 100) {
-            await interaction.reply({ content: '❌ Invalid percentage. Use 1-100.', ephemeral: true });
+            await interaction.reply({ content: '❌ Invalid percentage. Use 1-100.', flags: ['Ephemeral'] });
             return;
         }
 
@@ -559,7 +559,7 @@ export class DiscordBot {
         const user = this.userDb.getOrCreateUser(userId);
 
         if (user.tier !== 'premium') {
-            await interaction.reply({ content: '⭐ Snipe mode is a Premium feature.\n\nUse `/upgrade` to unlock!', ephemeral: true });
+            await interaction.reply({ content: '⭐ Snipe mode is a Premium feature.\n\nUse `/upgrade` to unlock!', flags: ['Ephemeral'] });
             return;
         }
 
@@ -572,7 +572,7 @@ export class DiscordBot {
             const targets = this.snipeMode.getUserTargets(userId);
             // Build plain text (snipeMode.formatTargets uses Markdown‐style, rebuild for Discord)
             if (targets.length === 0) {
-                await interaction.reply({ content: '🎯 **Snipe Mode**\n\nNo active snipe targets.\n\nUse `/snipe collection:<slug> maxprice:<eth>` to add one.', ephemeral: true });
+                await interaction.reply({ content: '🎯 **Snipe Mode**\n\nNo active snipe targets.\n\nUse `/snipe collection:<slug> maxprice:<eth>` to add one.', flags: ['Ephemeral'] });
             } else {
                 let msg = '🎯 **Active Snipe Targets**\n\n';
                 for (const t of targets) {
@@ -586,14 +586,14 @@ export class DiscordBot {
 
         if (off) {
             const removed = this.snipeMode.removeTarget(userId, collection);
-            await interaction.reply({ content: removed ? `✅ Snipe removed for ${collection}` : '❌ No snipe found.', ephemeral: true });
+            await interaction.reply({ content: removed ? `✅ Snipe removed for ${collection}` : '❌ No snipe found.', flags: ['Ephemeral'] });
             return;
         }
 
         if (maxPrice == null || maxPrice <= 0) {
             await interaction.reply({
                 content: '**Snipe Mode**\n\nUsage: `/snipe collection:bayc maxprice:50`\nDisable: `/snipe collection:bayc off:True`\nList: `/snipe`',
-                ephemeral: true,
+                flags: ['Ephemeral'],
             });
             return;
         }
@@ -602,7 +602,7 @@ export class DiscordBot {
         if (result.success) {
             await interaction.reply({ content: `🎯 Snipe active for **${collection}**\nMax price: ${maxPrice} ETH` });
         } else {
-            await interaction.reply({ content: `❌ ${result.error}`, ephemeral: true });
+            await interaction.reply({ content: `❌ ${result.error}`, flags: ['Ephemeral'] });
         }
     }
 
@@ -612,7 +612,7 @@ export class DiscordBot {
         const transactions = this.transactionLogger.getRecent(10);
 
         if (transactions.length === 0) {
-            await interaction.reply({ content: '📭 No transaction history yet.', ephemeral: true });
+            await interaction.reply({ content: '📭 No transaction history yet.', flags: ['Ephemeral'] });
             return;
         }
 
@@ -664,7 +664,7 @@ export class DiscordBot {
         const user = this.userDb.getOrCreateUser(userId);
 
         if (user.tier === 'premium') {
-            await interaction.reply({ content: '⭐ You already have Premium!', ephemeral: true });
+            await interaction.reply({ content: '⭐ You already have Premium!', flags: ['Ephemeral'] });
             return;
         }
 
@@ -747,10 +747,10 @@ export class DiscordBot {
         );
 
         try {
-            await interaction.reply({ content: '🧪 **Sending test alert...**', ephemeral: true });
+            await interaction.reply({ content: '🧪 **Sending test alert...**', flags: ['Ephemeral'] });
             await interaction.followUp({ embeds: [embed], components: [row] });
         } catch (e) {
-            await interaction.reply({ content: `❌ Test failed: ${(e as Error).message}`, ephemeral: true });
+            await interaction.reply({ content: `❌ Test failed: ${(e as Error).message}`, flags: ['Ephemeral'] });
         }
     }
 
@@ -774,8 +774,9 @@ export class DiscordBot {
                     components: [],
                 });
             } else if (id === 'activate_premium') {
+                await interaction.deferUpdate();
                 this.userDb.upgradeToPremium(userId);
-                await interaction.update({
+                await interaction.editReply({
                     embeds: [
                         new EmbedBuilder()
                             .setTitle('⭐ Welcome to Premium!')
