@@ -47,6 +47,7 @@ const discordConfigSchema = z.object({
     botToken: z.string().min(1),
     clientId: z.string().min(1),
     guildId: z.string().optional(),
+    notificationChannelId: z.string().optional(),
 });
 
 // Safety configuration

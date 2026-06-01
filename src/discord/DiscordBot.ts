@@ -11,6 +11,7 @@ import {
     ButtonInteraction,
     EmbedBuilder,
     Colors,
+    TextChannel,
 } from 'discord.js';
 import { NFTEvent, TradeResult } from '../types/index.js';
 import { Config } from '../config/index.js';
@@ -39,6 +40,7 @@ export class DiscordBot {
     private botToken: string;
     private clientId: string;
     private guildId?: string;
+    private notificationChannelId?: string;
 
     // Dependencies
     private userDb: UserDatabase;
@@ -63,6 +65,7 @@ export class DiscordBot {
         this.botToken = config.discord!.botToken;
         this.clientId = config.discord!.clientId;
         this.guildId = config.discord!.guildId;
+        this.notificationChannelId = config.discord!.notificationChannelId;
 
         this.userDb = userDb;
         this.transactionLogger = transactionLogger;
@@ -837,13 +840,59 @@ export class DiscordBot {
     // ── Outbound notifications (called by index-discord.ts) ──
 
     /**
-     * Send NFT event notification to all users tracking the wallet.
-     * In Discord we DM the users (like Telegram private messages).
+     * Send NFT event notification.
+     * If DISCORD_NOTIFICATION_CHANNEL_ID is set, posts to that channel (mentions tracking users).
+     * Otherwise falls back to DMs.
      */
     async sendEventNotification(event: NFTEvent): Promise<void> {
         const users = this.userDb.getUsersTrackingWallet(event.trackedWallet);
         const embed = formatNotification(event);
 
+        if (this.notificationChannelId) {
+            try {
+                const channel = await this.getNotificationChannel();
+                if (!channel) return;
+
+                // Collect mentions for users tracking this wallet
+                const mentions: string[] = [];
+                for (const user of users) {
+                    const discordUser = await this.findDiscordUser(user.id);
+                    if (discordUser) mentions.push(`<@${discordUser.id}>`);
+                }
+
+                const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                    new ButtonBuilder().setCustomId(`confirm_buy:${event.id}`).setLabel('✅ Buy').setStyle(ButtonStyle.Success),
+                    new ButtonBuilder().setCustomId(`cancel_buy:${event.id}`).setLabel('❌ Skip').setStyle(ButtonStyle.Secondary),
+                );
+
+                this.pendingConfirmations.set(event.id, {
+                    event,
+                    userId: '',
+                    expiresAt: Date.now() + 5 * 60 * 1000,
+                });
+
+                const hasAutoBuy = users.some(u => u.settings.autoBuyEnabled);
+                await channel.send({
+                    content: mentions.length > 0 ? mentions.join(' ') : undefined,
+                    embeds: [embed],
+                    components: hasAutoBuy ? [] : [row],
+                });
+
+                // Auto-buy for any user who has it enabled
+                for (const user of users) {
+                    if (user.settings.autoBuyEnabled && this.onConfirmBuy) {
+                        const result = await this.onConfirmBuy(event, 1);
+                        const resultEmbed = formatTradeResult(result, event);
+                        await channel.send({ embeds: [resultEmbed] });
+                    }
+                }
+            } catch (e) {
+                logger.error('Failed to send event notification to channel', { error: e });
+            }
+            return;
+        }
+
+        // DM fallback
         for (const user of users) {
             try {
                 const discordUser = await this.findDiscordUser(user.id);
@@ -854,7 +903,6 @@ export class DiscordBot {
                     new ButtonBuilder().setCustomId(`cancel_buy:${event.id}`).setLabel('❌ Skip').setStyle(ButtonStyle.Secondary),
                 );
 
-                // Store pending confirmation
                 this.pendingConfirmations.set(event.id, {
                     event,
                     userId: discordUser.id,
@@ -867,7 +915,6 @@ export class DiscordBot {
                     components: user.settings.autoBuyEnabled ? [] : [row],
                 });
 
-                // Auto-buy if enabled
                 if (user.settings.autoBuyEnabled && this.onConfirmBuy) {
                     const result = await this.onConfirmBuy(event, 1);
                     const resultEmbed = formatTradeResult(result, event);
@@ -880,13 +927,9 @@ export class DiscordBot {
     }
 
     /**
-     * Send whale alert to all premium users
+     * Send whale alert to the notification channel (or premium users via DM as fallback).
      */
     async sendWhaleAlert(event: NFTEvent): Promise<void> {
-        const users = Object.values((this.userDb as any)['data'].users).filter(
-            (u: any) => (u as User).tier === 'premium'
-        ) as User[];
-
         const embed = new EmbedBuilder()
             .setTitle('🐋 WHALE ALERT')
             .setColor(Colors.DarkAqua)
@@ -896,6 +939,22 @@ export class DiscordBot {
                 { name: 'Price', value: event.priceFormatted, inline: true },
                 { name: 'Collection', value: `\`${event.contractAddress.slice(0, 10)}...\``, inline: true },
             );
+
+        if (this.notificationChannelId) {
+            try {
+                const channel = await this.getNotificationChannel();
+                if (!channel) return;
+                await channel.send({ embeds: [embed] });
+            } catch (e) {
+                logger.error('Failed to send whale alert to channel', { error: e });
+            }
+            return;
+        }
+
+        // DM fallback — premium users only
+        const users = Object.values((this.userDb as any)['data'].users).filter(
+            (u: any) => (u as User).tier === 'premium'
+        ) as User[];
 
         for (const user of users) {
             try {
@@ -910,9 +969,24 @@ export class DiscordBot {
     }
 
     /**
-     * Send price alert via DM
+     * Send price alert to the notification channel (or user DM as fallback).
      */
     async sendPriceAlert(userId: number, message: string): Promise<void> {
+        if (this.notificationChannelId) {
+            try {
+                const channel = await this.getNotificationChannel();
+                if (!channel) return;
+                // Mention the user if we can resolve them
+                const discordUser = await this.findDiscordUser(userId);
+                const mention = discordUser ? `<@${discordUser.id}> ` : '';
+                await channel.send({ content: `${mention}${message}` });
+            } catch (e) {
+                logger.error('Failed to send price alert to channel', { userId, error: e });
+            }
+            return;
+        }
+
+        // DM fallback
         try {
             const discordUser = await this.findDiscordUser(userId);
             if (!discordUser) return;
@@ -924,9 +998,21 @@ export class DiscordBot {
     }
 
     /**
-     * Send startup notification to all registered users
+     * Send startup notification to the notification channel (or all users via DM as fallback).
      */
     async sendStartupNotification(message: string): Promise<void> {
+        if (this.notificationChannelId) {
+            try {
+                const channel = await this.getNotificationChannel();
+                if (!channel) return;
+                await channel.send({ content: message });
+            } catch (e) {
+                logger.error('Failed to send startup notification to channel', { error: e });
+            }
+            return;
+        }
+
+        // DM fallback
         const users = Object.values((this.userDb as any)['data'].users) as User[];
         for (const user of users) {
             try {
@@ -941,6 +1027,19 @@ export class DiscordBot {
     }
 
     // ── Helpers ──────────────────────────────────────────
+
+    private async getNotificationChannel(): Promise<TextChannel | null> {
+        if (!this.notificationChannelId) return null;
+        try {
+            const channel = await this.client.channels.fetch(this.notificationChannelId);
+            if (channel instanceof TextChannel) return channel;
+            logger.warn('DISCORD_NOTIFICATION_CHANNEL_ID is not a text channel', { channelId: this.notificationChannelId });
+            return null;
+        } catch (e) {
+            logger.error('Failed to fetch notification channel', { channelId: this.notificationChannelId, error: e });
+            return null;
+        }
+    }
 
     private extractAlchemyKey(rpcUrl?: string): string | undefined {
         if (!rpcUrl) return undefined;
