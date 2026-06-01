@@ -134,6 +134,9 @@ export class DiscordBot {
             new SlashCommandBuilder().setName('track')
                 .setDescription('Track a wallet')
                 .addStringOption(o => o.setName('address').setDescription('Ethereum wallet address (0x...)').setRequired(true)),
+            new SlashCommandBuilder().setName('bulk-import')
+                .setDescription('Track multiple wallets at once')
+                .addStringOption(o => o.setName('wallets').setDescription('Comma or newline-separated list of wallet addresses').setRequired(true)),
             new SlashCommandBuilder().setName('untrack')
                 .setDescription('Stop tracking a wallet')
                 .addStringOption(o => o.setName('address').setDescription('Ethereum wallet address').setRequired(true)),
@@ -181,6 +184,7 @@ export class DiscordBot {
                 case 'start': return await this.cmdStart(interaction);
                 case 'help': return await this.cmdHelp(interaction);
                 case 'track': return await this.cmdTrack(interaction);
+                case 'bulk-import': return await this.cmdBulkImport(interaction);
                 case 'untrack': return await this.cmdUntrack(interaction);
                 case 'wallets': return await this.cmdWallets(interaction);
                 case 'autobuy': return await this.cmdAutobuy(interaction);
@@ -306,6 +310,73 @@ export class DiscordBot {
         } else {
             await interaction.reply({ content: `❌ ${result.error}`, flags: ['Ephemeral'] });
         }
+    }
+
+    // ─── /bulk-import ───────────────────────────────────
+
+    private async cmdBulkImport(interaction: ChatInputCommandInteraction): Promise<void> {
+        const input = interaction.options.getString('wallets', true);
+        const userId = this.discordUserId(interaction);
+        this.userDb.getOrCreateUser(userId, interaction.user.username, interaction.user.globalName ?? undefined);
+
+        // Split on commas, newlines, or whitespace — filter valid ETH addresses
+        const candidates = input.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+        const valid = candidates.filter(s => /^0x[a-fA-F0-9]{40}$/.test(s));
+        const invalid = candidates.filter(s => !/^0x[a-fA-F0-9]{40}$/.test(s));
+
+        if (valid.length === 0) {
+            await interaction.reply({ content: '❌ No valid Ethereum addresses found. Each address must start with `0x` followed by 40 hex characters.', flags: ['Ephemeral'] });
+            return;
+        }
+
+        await interaction.deferReply();
+
+        const added: string[] = [];
+        const skipped: string[] = [];
+        const failed: { address: string; reason: string }[] = [];
+
+        for (const address of valid) {
+            const result = this.userDb.addWallet(userId, address);
+            if (result.success) {
+                if (this.onWalletAdded) this.onWalletAdded(address);
+                added.push(address);
+            } else if (result.error?.includes('Already tracking')) {
+                skipped.push(address);
+            } else {
+                failed.push({ address, reason: result.error || 'Unknown error' });
+            }
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('📥 Bulk Import Results')
+            .setColor(added.length > 0 ? Colors.Green : Colors.Red);
+
+        if (added.length > 0) {
+            embed.addFields({
+                name: `✅ Added (${added.length})`,
+                value: added.map(a => `\`${a}\``).join('\n'),
+            });
+        }
+        if (skipped.length > 0) {
+            embed.addFields({
+                name: `⏭ Already tracking (${skipped.length})`,
+                value: skipped.map(a => `\`${a}\``).join('\n'),
+            });
+        }
+        if (failed.length > 0) {
+            embed.addFields({
+                name: `❌ Failed (${failed.length})`,
+                value: failed.map(f => `\`${f.address}\` — ${f.reason}`).join('\n'),
+            });
+        }
+        if (invalid.length > 0) {
+            embed.addFields({
+                name: `⚠️ Invalid format (${invalid.length})`,
+                value: invalid.map(s => `\`${s}\``).join('\n'),
+            });
+        }
+
+        await interaction.editReply({ embeds: [embed] });
     }
 
     // ─── /untrack ───────────────────────────────────────

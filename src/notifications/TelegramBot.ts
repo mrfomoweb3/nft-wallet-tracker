@@ -166,6 +166,63 @@ export class TelegramBot {
             }
         });
 
+        // /bulkimport <address1>, <address2>, ...
+        this.bot.command('bulkimport', async (ctx) => {
+            const input = ctx.match?.trim();
+            if (!input) {
+                await ctx.reply(
+                    '*Bulk Import*\n\n' +
+                    'Usage: `/bulkimport 0x123..., 0x456..., 0x789...`\n\n' +
+                    'Separate addresses with commas, spaces, or new lines.',
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            }
+
+            this.userDb.getOrCreateUser(ctx.from!.id, ctx.from?.username, ctx.from?.first_name);
+
+            const candidates = input.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+            const valid = candidates.filter(s => /^0x[a-fA-F0-9]{40}$/.test(s));
+            const invalid = candidates.filter(s => !/^0x[a-fA-F0-9]{40}$/.test(s));
+
+            if (valid.length === 0) {
+                await ctx.reply('❌ No valid Ethereum addresses found.');
+                return;
+            }
+
+            const added: string[] = [];
+            const skipped: string[] = [];
+            const failed: { address: string; reason: string }[] = [];
+
+            for (const address of valid) {
+                const result = this.userDb.addWallet(ctx.from!.id, address);
+                if (result.success) {
+                    if (this.onWalletAdded) this.onWalletAdded(address);
+                    added.push(address);
+                } else if (result.error?.includes('Already tracking')) {
+                    skipped.push(address);
+                } else {
+                    failed.push({ address, reason: result.error || 'Unknown error' });
+                }
+            }
+
+            let message = '📥 *Bulk Import Results*\n\n';
+            if (added.length > 0) {
+                message += `✅ *Added (${added.length}):*\n${added.map(a => `\`${a}\``).join('\n')}\n\n`;
+            }
+            if (skipped.length > 0) {
+                message += `⏭ *Already tracking (${skipped.length}):*\n${skipped.map(a => `\`${a}\``).join('\n')}\n\n`;
+            }
+            if (failed.length > 0) {
+                message += `❌ *Failed (${failed.length}):*\n${failed.map(f => `\`${f.address}\` — ${f.reason}`).join('\n')}\n\n`;
+            }
+            if (invalid.length > 0) {
+                message += `⚠️ *Invalid format (${invalid.length}):*\n${invalid.map(s => `\`${s}\``).join('\n')}`;
+            }
+
+            await ctx.reply(message.trim(), { parse_mode: 'Markdown' });
+        });
+
         // /untrack <address>
         this.bot.command('untrack', async (ctx) => {
             const address = ctx.match?.trim();
@@ -516,6 +573,7 @@ export class TelegramBot {
             await this.bot.api.setMyCommands([
                 { command: 'start', description: 'Start the bot' },
                 { command: 'track', description: 'Track a wallet' },
+                { command: 'bulkimport', description: 'Track multiple wallets at once' },
                 { command: 'untrack', description: 'Stop tracking' },
                 { command: 'wallets', description: 'List wallets' },
                 { command: 'autobuy', description: 'Toggle auto-buy' },
