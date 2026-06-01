@@ -41,6 +41,7 @@ export class DiscordBot {
     private clientId: string;
     private guildId?: string;
     private notificationChannelId?: string;
+    private notificationRoleId?: string;
 
     // Dependencies
     private userDb: UserDatabase;
@@ -66,6 +67,7 @@ export class DiscordBot {
         this.clientId = config.discord!.clientId;
         this.guildId = config.discord!.guildId;
         this.notificationChannelId = config.discord!.notificationChannelId;
+        this.notificationRoleId = config.discord!.notificationRoleId;
 
         this.userDb = userDb;
         this.transactionLogger = transactionLogger;
@@ -159,7 +161,7 @@ export class DiscordBot {
                 .addBooleanOption(o => o.setName('off').setDescription('Remove snipe').setRequired(false)),
             new SlashCommandBuilder().setName('history').setDescription('Transaction history'),
             new SlashCommandBuilder().setName('tier').setDescription('View your subscription'),
-            new SlashCommandBuilder().setName('upgrade').setDescription('Upgrade to Premium'),
+            new SlashCommandBuilder().setName('upgrade').setDescription('Features info'),
             new SlashCommandBuilder().setName('killswitch').setDescription('Emergency stop'),
             new SlashCommandBuilder().setName('test').setDescription('Send a test alert'),
         ];
@@ -241,42 +243,37 @@ export class DiscordBot {
         const userId = this.discordUserId(interaction);
         const user = this.userDb.getOrCreateUser(userId, interaction.user.username, interaction.user.globalName ?? undefined);
 
-        const tierEmoji = user.tier === 'premium' ? '⭐' : '🆓';
-
         const embed = new EmbedBuilder()
             .setTitle('🚀 NFT Wallet Tracker Bot')
             .setColor(Colors.Blurple)
-            .setDescription(
-                `Welcome${user.firstName ? `, ${user.firstName}` : ''}!\n` +
-                `Account: ${tierEmoji} **${user.tier.toUpperCase()}**`
-            )
+            .setDescription(`Welcome${user.firstName ? `, ${user.firstName}` : ''}!`)
             .addFields(
                 {
-                    name: '📝 Commands',
+                    name: '📝 Tracking',
                     value: [
                         '`/track <address>` — Track a wallet',
                         '`/untrack <address>` — Stop tracking',
                         '`/wallets` — List tracked wallets',
                         '`/autobuy` — Toggle auto-buy',
-                        '`/status` — Bot status',
+                        '`/portfolio` — View NFT holdings',
                     ].join('\n'),
                 },
                 {
-                    name: '⭐ Premium Features',
+                    name: '🔔 Alerts',
                     value: [
                         '`/alert <collection> <percent>` — Price alerts',
-                        '`/portfolio` — View NFT holdings',
                         '`/snipe <collection> <maxPrice>` — Snipe mode',
+                        '`/gas` — Current gas prices',
+                        '`/stats <collection>` — Collection stats',
                     ].join('\n'),
                 },
                 {
                     name: '🛠 Utilities',
                     value: [
-                        '`/stats <collection>` — Collection stats',
-                        '`/gas` — Current gas prices',
+                        '`/status` — Bot status',
                         '`/history` — Transaction history',
-                        '`/tier` — Subscription info',
-                        '`/upgrade` — Get Premium',
+                        '`/killswitch` — Emergency stop',
+                        '`/test` — Send test alert',
                     ].join('\n'),
                 },
             );
@@ -402,7 +399,6 @@ export class DiscordBot {
             .setTitle('📊 Bot Status')
             .setColor(Colors.Green)
             .addFields(
-                { name: '👤 Your tier', value: user.tier, inline: true },
                 { name: '👛 Your wallets', value: user.wallets.length.toString(), inline: true },
                 { name: '🤖 Auto-buy', value: user.settings.autoBuyEnabled ? '🟢' : '🔴', inline: true },
                 { name: `⛓ Ethereum Listener`, value: `${ethStatus}${blockInfo}` },
@@ -475,11 +471,6 @@ export class DiscordBot {
         const userId = this.discordUserId(interaction);
         const user = this.userDb.getOrCreateUser(userId);
 
-        if (user.tier !== 'premium') {
-            await interaction.reply({ content: '⭐ Portfolio tracking is a Premium feature.\n\nUse `/upgrade` to unlock!', flags: ['Ephemeral'] });
-            return;
-        }
-
         if (user.wallets.length === 0) {
             await interaction.reply({ content: '📭 No wallets to show portfolio for.\n\nUse `/track` first.', flags: ['Ephemeral'] });
             return;
@@ -517,12 +508,7 @@ export class DiscordBot {
 
     private async cmdAlert(interaction: ChatInputCommandInteraction): Promise<void> {
         const userId = this.discordUserId(interaction);
-        const user = this.userDb.getOrCreateUser(userId);
-
-        if (user.tier !== 'premium') {
-            await interaction.reply({ content: '⭐ Price alerts are a Premium feature.\n\nUse `/upgrade` to unlock!', flags: ['Ephemeral'] });
-            return;
-        }
+        this.userDb.getOrCreateUser(userId);
 
         const collection = interaction.options.getString('collection', true).trim();
         const off = interaction.options.getBoolean('off') ?? false;
@@ -559,12 +545,7 @@ export class DiscordBot {
 
     private async cmdSnipe(interaction: ChatInputCommandInteraction): Promise<void> {
         const userId = this.discordUserId(interaction);
-        const user = this.userDb.getOrCreateUser(userId);
-
-        if (user.tier !== 'premium') {
-            await interaction.reply({ content: '⭐ Snipe mode is a Premium feature.\n\nUse `/upgrade` to unlock!', flags: ['Ephemeral'] });
-            return;
-        }
+        this.userDb.getOrCreateUser(userId);
 
         const collection = interaction.options.getString('collection');
         const maxPrice = interaction.options.getNumber('maxprice');
@@ -639,23 +620,17 @@ export class DiscordBot {
     private async cmdTier(interaction: ChatInputCommandInteraction): Promise<void> {
         const userId = this.discordUserId(interaction);
         const user = this.userDb.getOrCreateUser(userId);
-        const limit = this.userDb.getWalletLimit(user.tier);
-        const emoji = user.tier === 'premium' ? '⭐' : '🆓';
+        const limit = this.userDb.getWalletLimit();
 
         const embed = new EmbedBuilder()
-            .setTitle(`${emoji} Your Subscription`)
-            .setColor(user.tier === 'premium' ? Colors.Gold : Colors.Greyple)
+            .setTitle('✅ Your Account')
+            .setColor(Colors.Gold)
             .addFields(
-                { name: 'Tier', value: `**${user.tier.toUpperCase()}**`, inline: true },
                 { name: 'Wallets', value: `${user.wallets.length}/${limit}`, inline: true },
-                { name: 'Price Alerts', value: user.tier === 'premium' ? '✅' : '❌', inline: true },
-                { name: 'Snipe Mode', value: user.tier === 'premium' ? '✅' : '❌', inline: true },
-                { name: 'Portfolio', value: user.tier === 'premium' ? '✅' : '❌', inline: true },
+                { name: 'Price Alerts', value: '✅', inline: true },
+                { name: 'Snipe Mode', value: '✅', inline: true },
+                { name: 'Portfolio', value: '✅', inline: true },
             );
-
-        if (user.tier === 'free') {
-            embed.setFooter({ text: 'Use /upgrade to unlock all features!' });
-        }
 
         await interaction.reply({ embeds: [embed] });
     }
@@ -663,36 +638,7 @@ export class DiscordBot {
     // ─── /upgrade ───────────────────────────────────────
 
     private async cmdUpgrade(interaction: ChatInputCommandInteraction): Promise<void> {
-        const userId = this.discordUserId(interaction);
-        const user = this.userDb.getOrCreateUser(userId);
-
-        if (user.tier === 'premium') {
-            await interaction.reply({ content: '⭐ You already have Premium!', flags: ['Ephemeral'] });
-            return;
-        }
-
-        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder().setCustomId('activate_premium').setLabel('🎁 Activate Premium (Demo)').setStyle(ButtonStyle.Primary),
-        );
-
-        const embed = new EmbedBuilder()
-            .setTitle('⭐ Upgrade to Premium')
-            .setColor(Colors.Gold)
-            .addFields(
-                {
-                    name: 'Free Tier',
-                    value: '• Track 1 wallet\n• Basic alerts\n• Gas tracker\n• Collection stats',
-                    inline: true,
-                },
-                {
-                    name: 'Premium Tier',
-                    value: '• Track 100 wallets\n• Price alerts\n• Portfolio tracking\n• Snipe mode\n• Priority support',
-                    inline: true,
-                },
-            )
-            .setFooter({ text: 'Click below to activate (demo)' });
-
-        await interaction.reply({ embeds: [embed], components: [row] });
+        await interaction.reply({ content: '✅ All features are already unlocked!', flags: ['Ephemeral'] });
     }
 
     // ─── /killswitch ────────────────────────────────────
@@ -776,21 +722,6 @@ export class DiscordBot {
                     embeds: [new EmbedBuilder().setTitle('🔴 Auto-Buy DISABLED').setColor(Colors.Red)],
                     components: [],
                 });
-            } else if (id === 'activate_premium') {
-                await interaction.deferUpdate();
-                this.userDb.upgradeToPremium(userId);
-                await interaction.editReply({
-                    embeds: [
-                        new EmbedBuilder()
-                            .setTitle('⭐ Welcome to Premium!')
-                            .setColor(Colors.Gold)
-                            .setDescription(
-                                'You now have access to:\n' +
-                                '• 100 wallet tracking\n• Price alerts\n• Portfolio tracking\n• Snipe mode\n\nEnjoy! 🎉'
-                            ),
-                    ],
-                    components: [],
-                });
             } else if (id === 'killswitch_on') {
                 if (this.onToggleKillSwitch) this.onToggleKillSwitch(true);
                 await interaction.update({
@@ -853,11 +784,17 @@ export class DiscordBot {
                 const channel = await this.getNotificationChannel();
                 if (!channel) return;
 
-                // Collect mentions for users tracking this wallet
-                const mentions: string[] = [];
-                for (const user of users) {
-                    const discordUser = await this.findDiscordUser(user.id);
-                    if (discordUser) mentions.push(`<@${discordUser.id}>`);
+                // Determine who to ping: a configured role, or individual tracking users
+                let pingContent: string | undefined;
+                if (this.notificationRoleId) {
+                    pingContent = `<@&${this.notificationRoleId}>`;
+                } else {
+                    const mentions: string[] = [];
+                    for (const user of users) {
+                        const discordUser = await this.findDiscordUser(user.id);
+                        if (discordUser) mentions.push(`<@${discordUser.id}>`);
+                    }
+                    pingContent = mentions.length > 0 ? mentions.join(' ') : undefined;
                 }
 
                 const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -873,7 +810,7 @@ export class DiscordBot {
 
                 const hasAutoBuy = users.some(u => u.settings.autoBuyEnabled);
                 await channel.send({
-                    content: mentions.length > 0 ? mentions.join(' ') : undefined,
+                    content: pingContent,
                     embeds: [embed],
                     components: hasAutoBuy ? [] : [row],
                 });
@@ -951,10 +888,8 @@ export class DiscordBot {
             return;
         }
 
-        // DM fallback — premium users only
-        const users = Object.values((this.userDb as any)['data'].users).filter(
-            (u: any) => (u as User).tier === 'premium'
-        ) as User[];
+        // DM fallback — all users
+        const users = Object.values((this.userDb as any)['data'].users) as User[];
 
         for (const user of users) {
             try {

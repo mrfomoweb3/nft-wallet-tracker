@@ -46,10 +46,7 @@ const DEFAULT_SETTINGS: UserSettings = {
     snipeModeEnabled: false,
 };
 
-const WALLET_LIMITS: Record<SubscriptionTier, number> = {
-    free: 1,
-    premium: 100,
-};
+const WALLET_LIMIT = 100;
 
 /**
  * UserDatabase - JSON-based multi-user storage
@@ -98,7 +95,7 @@ export class UserDatabase {
                 id: telegramId,
                 username,
                 firstName,
-                tier: 'free',
+                tier: 'premium',
                 wallets: [],
                 priceAlerts: [],
                 settings: { ...DEFAULT_SETTINGS },
@@ -138,13 +135,8 @@ export class UserDatabase {
             return { success: false, error: 'Already tracking this wallet' };
         }
 
-        // Check tier limit
-        const limit = WALLET_LIMITS[user.tier];
-        if (user.wallets.length >= limit) {
-            return {
-                success: false,
-                error: `Wallet limit reached (${limit}). Upgrade to Premium for more!`
-            };
+        if (user.wallets.length >= WALLET_LIMIT) {
+            return { success: false, error: `Wallet limit reached (${WALLET_LIMIT}).` };
         }
 
         user.wallets.push(normalizedWallet);
@@ -234,10 +226,6 @@ export class UserDatabase {
         const user = this.getUser(telegramId);
         if (!user) return { success: false, error: 'User not found' };
 
-        if (user.tier !== 'premium') {
-            return { success: false, error: 'Price alerts are a Premium feature. Use /upgrade' };
-        }
-
         // Check if already has alert for this collection
         const existing = user.priceAlerts.find(a => a.collection.toLowerCase() === collection.toLowerCase());
         if (existing) {
@@ -294,10 +282,7 @@ export class UserDatabase {
         };
     }
 
-    /**
-     * Get wallet limit for tier
-     */
-    getWalletLimit(tier: SubscriptionTier): number {
-        return WALLET_LIMITS[tier];
+    getWalletLimit(_tier?: SubscriptionTier): number {
+        return WALLET_LIMIT;
     }
 }

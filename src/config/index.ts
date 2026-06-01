@@ -95,6 +95,7 @@ class ConfigManager {
                 clientId: process.env.DISCORD_CLIENT_ID || '',
                 guildId: process.env.DISCORD_GUILD_ID || undefined,
                 notificationChannelId: process.env.DISCORD_NOTIFICATION_CHANNEL_ID || undefined,
+                notificationRoleId: process.env.DISCORD_NOTIFICATION_ROLE_ID || undefined,
             };
         }
 

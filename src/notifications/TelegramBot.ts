@@ -86,27 +86,25 @@ export class TelegramBot {
                 ctx.from?.first_name
             );
 
-            const tierEmoji = user.tier === 'premium' ? '⭐' : '🆓';
             await ctx.reply(
                 `🚀 *NFT Wallet Tracker Bot*\n\n` +
-                `Welcome${user.firstName ? `, ${user.firstName}` : ''}!\n` +
-                `Account: ${tierEmoji} ${user.tier.toUpperCase()}\n\n` +
-                `*Commands:*\n` +
+                `Welcome${user.firstName ? `, ${user.firstName}` : ''}!\n\n` +
+                `*Tracking:*\n` +
                 `/track <address> - Track a wallet\n` +
                 `/untrack <address> - Stop tracking\n` +
                 `/wallets - List tracked wallets\n` +
                 `/autobuy - Toggle auto-buy\n` +
-                `/status - Bot status\n\n` +
-                `*Premium Features:*\n` +
+                `/portfolio - View NFT holdings\n\n` +
+                `*Alerts:*\n` +
                 `/alert <collection> <percent> - Price alerts\n` +
-                `/portfolio - View NFT holdings\n` +
-                `/snipe <collection> <maxPrice> - Snipe mode\n\n` +
-                `*Utilities:*\n` +
-                `/stats <collection> - Collection stats\n` +
+                `/snipe <collection> <maxPrice> - Snipe mode\n` +
                 `/gas - Current gas prices\n` +
+                `/stats <collection> - Collection stats\n\n` +
+                `*Utilities:*\n` +
+                `/status - Bot status\n` +
                 `/history - Transaction history\n` +
-                `/tier - View subscription\n` +
-                `/upgrade - Get Premium`,
+                `/killswitch - Emergency stop\n` +
+                `/test - Send test alert`,
                 { parse_mode: 'Markdown' }
             );
         });
@@ -119,60 +117,32 @@ export class TelegramBot {
                 `Track whale wallets and get notified of their NFT activity.\n\n` +
                 `*Auto-Buy:*\n` +
                 `When enabled, automatically copy-buy NFTs that tracked wallets purchase.\n\n` +
-                `*Price Alerts (Premium):*\n` +
+                `*Price Alerts:*\n` +
                 `Get notified when a collection's floor price changes by X%.\n\n` +
-                `*Snipe Mode (Premium):*\n` +
+                `*Snipe Mode:*\n` +
                 `Auto-buy listings below your set price.`,
                 { parse_mode: 'Markdown' }
             );
         });
 
-        // /tier - Show subscription status
+        // /tier - Account info
         this.bot.command('tier', async (ctx) => {
             const user = this.userDb.getOrCreateUser(ctx.from!.id);
-            const limit = this.userDb.getWalletLimit(user.tier);
-            const emoji = user.tier === 'premium' ? '⭐' : '🆓';
+            const limit = this.userDb.getWalletLimit();
 
             await ctx.reply(
-                `${emoji} *Your Subscription*\n\n` +
-                `Tier: *${user.tier.toUpperCase()}*\n` +
+                `✅ *Your Account*\n\n` +
                 `Wallets: ${user.wallets.length}/${limit}\n` +
-                `Price Alerts: ${user.tier === 'premium' ? '✅' : '❌'}\n` +
-                `Snipe Mode: ${user.tier === 'premium' ? '✅' : '❌'}\n` +
-                `Portfolio: ${user.tier === 'premium' ? '✅' : '❌'}\n\n` +
-                (user.tier === 'free' ? 'Use /upgrade to unlock all features!' : 'You have full access!'),
+                `Price Alerts: ✅\n` +
+                `Snipe Mode: ✅\n` +
+                `Portfolio: ✅`,
                 { parse_mode: 'Markdown' }
             );
         });
 
-        // /upgrade - Premium upgrade info
+        // /upgrade
         this.bot.command('upgrade', async (ctx) => {
-            const user = this.userDb.getOrCreateUser(ctx.from!.id);
-
-            if (user.tier === 'premium') {
-                await ctx.reply('⭐ You already have Premium!');
-                return;
-            }
-
-            const keyboard = new InlineKeyboard()
-                .text('🎁 Activate Premium (Demo)', 'activate_premium');
-
-            await ctx.reply(
-                `⭐ *Upgrade to Premium*\n\n` +
-                `*Free Tier:*\n` +
-                `• Track 1 wallet\n` +
-                `• Basic alerts\n` +
-                `• Gas tracker\n` +
-                `• Collection stats\n\n` +
-                `*Premium Tier:*\n` +
-                `• Track 100 wallets\n` +
-                `• Price alerts\n` +
-                `• Portfolio tracking\n` +
-                `• Snipe mode\n` +
-                `• Priority support\n\n` +
-                `Click below to activate (demo):`,
-                { parse_mode: 'Markdown', reply_markup: keyboard }
-            );
+            await ctx.reply('✅ All features are already unlocked!');
         });
 
         // /track <address>
@@ -228,8 +198,6 @@ export class TelegramBot {
         // /wallets - List user's wallets
         this.bot.command('wallets', async (ctx) => {
             const wallets = this.userDb.getUserWallets(ctx.from!.id);
-            const user = this.userDb.getUser(ctx.from!.id);
-            const limit = user ? this.userDb.getWalletLimit(user.tier) : 1;
 
             if (wallets.length === 0) {
                 await ctx.reply('📭 No wallets tracked.\n\nUse `/track <address>` to add one.', { parse_mode: 'Markdown' });
@@ -237,7 +205,7 @@ export class TelegramBot {
             }
 
             await ctx.reply(
-                `👛 *Your Tracked Wallets* (${wallets.length}/${limit})\n\n` +
+                `👛 *Your Tracked Wallets* (${wallets.length})\n\n` +
                 wallets.map((w, i) => `${i + 1}. \`${w}\``).join('\n'),
                 { parse_mode: 'Markdown' }
             );
@@ -286,7 +254,6 @@ export class TelegramBot {
 
             await ctx.reply(
                 `📊 *Bot Status*\n\n` +
-                `👤 Your tier: ${user.tier}\n` +
                 `👛 Your wallets: ${user.wallets.length}\n` +
                 `🤖 Auto-buy: ${user.settings.autoBuyEnabled ? '🟢' : '🔴'}\n\n` +
                 `⛓ *Ethereum Listener:* ${ethStatus}${blockInfo}\n\n` +
@@ -326,14 +293,9 @@ export class TelegramBot {
             }
         });
 
-        // /portfolio - Portfolio tracking (Premium)
+        // /portfolio
         this.bot.command('portfolio', async (ctx) => {
             const user = this.userDb.getOrCreateUser(ctx.from!.id);
-
-            if (user.tier !== 'premium') {
-                await ctx.reply('⭐ Portfolio tracking is a Premium feature.\n\nUse /upgrade to unlock!');
-                return;
-            }
 
             if (user.wallets.length === 0) {
                 await ctx.reply('📭 No wallets to show portfolio for.\n\nUse `/track <address>` first.', { parse_mode: 'Markdown' });
@@ -350,14 +312,9 @@ export class TelegramBot {
             );
         });
 
-        // /alert <collection> <percent> - Price alerts (Premium)
+        // /alert <collection> <percent>
         this.bot.command('alert', async (ctx) => {
-            const user = this.userDb.getOrCreateUser(ctx.from!.id);
-
-            if (user.tier !== 'premium') {
-                await ctx.reply('⭐ Price alerts are a Premium feature.\n\nUse /upgrade to unlock!');
-                return;
-            }
+            this.userDb.getOrCreateUser(ctx.from!.id);
 
             const args = ctx.match?.trim().split(/\s+/);
             if (!args || args.length < 2) {
@@ -393,14 +350,9 @@ export class TelegramBot {
             }
         });
 
-        // /snipe <collection> <maxPrice> - Snipe mode (Premium)
+        // /snipe <collection> <maxPrice>
         this.bot.command('snipe', async (ctx) => {
-            const user = this.userDb.getOrCreateUser(ctx.from!.id);
-
-            if (user.tier !== 'premium') {
-                await ctx.reply('⭐ Snipe mode is a Premium feature.\n\nUse /upgrade to unlock!');
-                return;
-            }
+            this.userDb.getOrCreateUser(ctx.from!.id);
 
             const args = ctx.match?.trim().split(/\s+/);
 
@@ -684,13 +636,8 @@ export class TelegramBot {
         }
     }
 
-    /**
-     * Send whale alert to all premium users
-     */
     async sendWhaleAlert(event: NFTEvent): Promise<void> {
-        const users = Object.values(this.userDb['data'].users).filter(
-            (u: User) => u.tier === 'premium'
-        );
+        const users = Object.values(this.userDb['data'].users) as User[];
 
         const message = `🐋 *WHALE ALERT*\n\n` +
             `Wallet: \`${event.trackedWallet.slice(0, 10)}...\`\n` +

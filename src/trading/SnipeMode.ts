@@ -42,10 +42,6 @@ export class SnipeMode extends EventEmitter {
             return { success: false, error: 'User not found' };
         }
 
-        if (user.tier !== 'premium') {
-            return { success: false, error: 'Snipe mode is a Premium feature. Use /upgrade' };
-        }
-
         const normalized = collection.toLowerCase();
 
 
