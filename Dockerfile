@@ -28,4 +28,4 @@ RUN mkdir -p /app/data
 ENV NODE_ENV=production
 
 # Run the bot
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/index-discord.js"]

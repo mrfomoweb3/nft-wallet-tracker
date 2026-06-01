@@ -51,7 +51,7 @@ class ConfigManager {
             config.ethereum = {
                 enabled: process.env.ETH_ENABLED !== 'false',
                 rpcUrl: process.env.ETH_RPC_URL,
-                wsUrl: process.env.ETH_WS_URL || process.env.ETH_RPC_URL.replace('https', 'wss'),
+                wsUrl: process.env.ETH_WS_URL || process.env.ETH_RPC_URL.replace(/^https?/, 'wss'),
                 privateRpc: process.env.ETH_PRIVATE_RPC,
                 chainId: parseInt(process.env.ETH_CHAIN_ID || '1', 10),
             };
@@ -62,7 +62,7 @@ class ConfigManager {
             config.solana = {
                 enabled: process.env.SOL_ENABLED !== 'false',
                 rpcUrl: process.env.SOL_RPC_URL,
-                wsUrl: process.env.SOL_WS_URL || process.env.SOL_RPC_URL.replace('https', 'wss'),
+                wsUrl: process.env.SOL_WS_URL || process.env.SOL_RPC_URL.replace(/^https?/, 'wss'),
                 commitment: (process.env.SOL_COMMITMENT as 'confirmed') || 'confirmed',
             };
         }

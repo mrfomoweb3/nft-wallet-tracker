@@ -7,7 +7,6 @@ import { UserDatabase, User } from '../database/UserDatabase.js';
 import { GasTracker } from '../utils/GasTracker.js';
 import { PortfolioTracker } from '../portfolio/PortfolioTracker.js';
 import { CollectionStats } from '../stats/CollectionStats.js';
-import { SnipeMode } from '../trading/SnipeMode.js';
 import { TransactionLogger } from '../safety/TransactionLogger.js';
 import { EthereumListener } from '../blockchain/index.js';
 
@@ -35,7 +34,6 @@ export class TelegramBot {
     private gasTracker: GasTracker;
     private portfolioTracker: PortfolioTracker;
     private collectionStats: CollectionStats;
-    private snipeMode: SnipeMode;
     private transactionLogger: TransactionLogger;
     private ethereumListener: EthereumListener | null = null;
 
@@ -58,8 +56,6 @@ export class TelegramBot {
         this.gasTracker = new GasTracker(config.ethereum?.rpcUrl || '');
         this.portfolioTracker = new PortfolioTracker(this.extractAlchemyKey(config.ethereum?.rpcUrl));
         this.collectionStats = new CollectionStats();
-        this.snipeMode = new SnipeMode(userDb);
-
         // Create bot
         this.bot = new Bot<BotContext>(config.telegram.botToken);
 
@@ -97,7 +93,6 @@ export class TelegramBot {
                 `/portfolio - View NFT holdings\n\n` +
                 `*Alerts:*\n` +
                 `/alert <collection> <percent> - Price alerts\n` +
-                `/snipe <collection> <maxPrice> - Snipe mode\n` +
                 `/gas - Current gas prices\n` +
                 `/stats <collection> - Collection stats\n\n` +
                 `*Utilities:*\n` +
@@ -350,56 +345,6 @@ export class TelegramBot {
             }
         });
 
-        // /snipe <collection> <maxPrice>
-        this.bot.command('snipe', async (ctx) => {
-            this.userDb.getOrCreateUser(ctx.from!.id);
-
-            const args = ctx.match?.trim().split(/\s+/);
-
-            if (!args || args.length === 0) {
-                const targets = this.snipeMode.getUserTargets(ctx.from!.id);
-                await ctx.reply(this.snipeMode.formatTargets(targets), { parse_mode: 'Markdown' });
-                return;
-            }
-
-            if (args[0].toLowerCase() === 'off') {
-                const collection = args[1];
-                if (!collection) {
-                    await ctx.reply('Usage: `/snipe off <collection>`', { parse_mode: 'Markdown' });
-                    return;
-                }
-                const removed = this.snipeMode.removeTarget(ctx.from!.id, collection);
-                await ctx.reply(removed ? `✅ Snipe removed for ${collection}` : '❌ No snipe found.');
-                return;
-            }
-
-            if (args.length < 2) {
-                await ctx.reply(
-                    '*Snipe Mode*\n\n' +
-                    'Usage: `/snipe bayc 50` - Auto-buy BAYC under 50 ETH\n' +
-                    '`/snipe off bayc` - Disable snipe\n' +
-                    '`/snipe` - View active snipes',
-                    { parse_mode: 'Markdown' }
-                );
-                return;
-            }
-
-            const collection = args[0];
-            const maxPrice = parseFloat(args[1]);
-
-            if (isNaN(maxPrice) || maxPrice <= 0) {
-                await ctx.reply('❌ Invalid price.');
-                return;
-            }
-
-            const result = this.snipeMode.addTarget(ctx.from!.id, collection, maxPrice);
-            if (result.success) {
-                await ctx.reply(`🎯 Snipe active for *${collection}*\nMax price: ${maxPrice} ETH`, { parse_mode: 'Markdown' });
-            } else {
-                await ctx.reply(`❌ ${result.error}`);
-            }
-        });
-
         // /history - Transaction history
         this.bot.command('history', async (ctx) => {
             const transactions = this.transactionLogger.getRecent(10);
@@ -579,7 +524,6 @@ export class TelegramBot {
                 { command: 'stats', description: 'Collection stats' },
                 { command: 'portfolio', description: 'View portfolio' },
                 { command: 'alert', description: 'Price alerts' },
-                { command: 'snipe', description: 'Snipe mode' },
                 { command: 'history', description: 'Transaction history' },
                 { command: 'tier', description: 'Subscription status' },
                 { command: 'upgrade', description: 'Get Premium' },

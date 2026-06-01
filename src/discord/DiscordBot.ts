@@ -21,7 +21,6 @@ import { UserDatabase, User } from '../database/UserDatabase.js';
 import { GasTracker } from '../utils/GasTracker.js';
 import { PortfolioTracker } from '../portfolio/PortfolioTracker.js';
 import { CollectionStats } from '../stats/CollectionStats.js';
-import { SnipeMode } from '../trading/SnipeMode.js';
 import { TransactionLogger } from '../safety/TransactionLogger.js';
 import { EthereumListener } from '../blockchain/index.js';
 
@@ -48,7 +47,6 @@ export class DiscordBot {
     private gasTracker: GasTracker;
     private portfolioTracker: PortfolioTracker;
     private collectionStats: CollectionStats;
-    private snipeMode: SnipeMode;
     private transactionLogger: TransactionLogger;
     private ethereumListener: EthereumListener | null = null;
 
@@ -76,8 +74,6 @@ export class DiscordBot {
         this.gasTracker = new GasTracker(config.ethereum?.rpcUrl || '');
         this.portfolioTracker = new PortfolioTracker(this.extractAlchemyKey(config.ethereum?.rpcUrl));
         this.collectionStats = new CollectionStats();
-        this.snipeMode = new SnipeMode(userDb);
-
         // Discord client
         this.client = new Client({
             intents: [GatewayIntentBits.Guilds],
@@ -154,11 +150,6 @@ export class DiscordBot {
                 .addStringOption(o => o.setName('collection').setDescription('Collection slug').setRequired(true))
                 .addNumberOption(o => o.setName('percent').setDescription('Change % to trigger alert').setRequired(false))
                 .addBooleanOption(o => o.setName('off').setDescription('Remove alert').setRequired(false)),
-            new SlashCommandBuilder().setName('snipe')
-                .setDescription('Snipe mode (Premium)')
-                .addStringOption(o => o.setName('collection').setDescription('Collection slug').setRequired(false))
-                .addNumberOption(o => o.setName('maxprice').setDescription('Max price in ETH').setRequired(false))
-                .addBooleanOption(o => o.setName('off').setDescription('Remove snipe').setRequired(false)),
             new SlashCommandBuilder().setName('history').setDescription('Transaction history'),
             new SlashCommandBuilder().setName('tier').setDescription('View your subscription'),
             new SlashCommandBuilder().setName('upgrade').setDescription('Features info'),
@@ -198,7 +189,6 @@ export class DiscordBot {
                 case 'stats': return await this.cmdStats(interaction);
                 case 'portfolio': return await this.cmdPortfolio(interaction);
                 case 'alert': return await this.cmdAlert(interaction);
-                case 'snipe': return await this.cmdSnipe(interaction);
                 case 'history': return await this.cmdHistory(interaction);
                 case 'tier': return await this.cmdTier(interaction);
                 case 'upgrade': return await this.cmdUpgrade(interaction);
@@ -262,7 +252,6 @@ export class DiscordBot {
                     name: '🔔 Alerts',
                     value: [
                         '`/alert <collection> <percent>` — Price alerts',
-                        '`/snipe <collection> <maxPrice>` — Snipe mode',
                         '`/gas` — Current gas prices',
                         '`/stats <collection>` — Collection stats',
                     ].join('\n'),
@@ -538,55 +527,6 @@ export class DiscordBot {
             await interaction.reply({ content: `✅ Alert set for **${collection}**\nTrigger: ±${percent}% change` });
         } else {
             await interaction.reply({ content: `❌ ${result.error}`, ephemeral: true });
-        }
-    }
-
-    // ─── /snipe ──────────────────────────────────────────
-
-    private async cmdSnipe(interaction: ChatInputCommandInteraction): Promise<void> {
-        const userId = this.discordUserId(interaction);
-        this.userDb.getOrCreateUser(userId);
-
-        const collection = interaction.options.getString('collection');
-        const maxPrice = interaction.options.getNumber('maxprice');
-        const off = interaction.options.getBoolean('off') ?? false;
-
-        // No args → list targets
-        if (!collection) {
-            const targets = this.snipeMode.getUserTargets(userId);
-            // Build plain text (snipeMode.formatTargets uses Markdown‐style, rebuild for Discord)
-            if (targets.length === 0) {
-                await interaction.reply({ content: '🎯 **Snipe Mode**\n\nNo active snipe targets.\n\nUse `/snipe collection:<slug> maxprice:<eth>` to add one.', flags: ['Ephemeral'] });
-            } else {
-                let msg = '🎯 **Active Snipe Targets**\n\n';
-                for (const t of targets) {
-                    msg += `${t.active ? '🟢' : '🔴'} \`${t.collection}\` — Max: ${t.maxPrice} ETH\n`;
-                }
-                msg += '\nUse `/snipe collection:<slug> off:True` to remove.';
-                await interaction.reply({ content: msg });
-            }
-            return;
-        }
-
-        if (off) {
-            const removed = this.snipeMode.removeTarget(userId, collection);
-            await interaction.reply({ content: removed ? `✅ Snipe removed for ${collection}` : '❌ No snipe found.', flags: ['Ephemeral'] });
-            return;
-        }
-
-        if (maxPrice == null || maxPrice <= 0) {
-            await interaction.reply({
-                content: '**Snipe Mode**\n\nUsage: `/snipe collection:bayc maxprice:50`\nDisable: `/snipe collection:bayc off:True`\nList: `/snipe`',
-                flags: ['Ephemeral'],
-            });
-            return;
-        }
-
-        const result = this.snipeMode.addTarget(userId, collection, maxPrice);
-        if (result.success) {
-            await interaction.reply({ content: `🎯 Snipe active for **${collection}**\nMax price: ${maxPrice} ETH` });
-        } else {
-            await interaction.reply({ content: `❌ ${result.error}`, flags: ['Ephemeral'] });
         }
     }
 
