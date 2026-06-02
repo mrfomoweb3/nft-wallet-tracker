@@ -753,14 +753,10 @@ export class DiscordBot {
         };
 
         const embed = formatNotification(testEvent);
-        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder().setCustomId(`confirm_buy:${testEvent.id}`).setLabel('✅ Buy').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`cancel_buy:${testEvent.id}`).setLabel('❌ Skip').setStyle(ButtonStyle.Secondary),
-        );
 
         try {
             await interaction.reply({ content: '🧪 **Sending test alert...**', flags: ['Ephemeral'] });
-            await interaction.followUp({ embeds: [embed], components: [row] });
+            await interaction.followUp({ embeds: [embed] });
         } catch (e) {
             await interaction.reply({ content: `❌ Test failed: ${(e as Error).message}`, flags: ['Ephemeral'] });
         }
@@ -862,32 +858,10 @@ export class DiscordBot {
                     pingContent = mentions.length > 0 ? mentions.join(' ') : undefined;
                 }
 
-                const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-                    new ButtonBuilder().setCustomId(`confirm_buy:${event.id}`).setLabel('✅ Buy').setStyle(ButtonStyle.Success),
-                    new ButtonBuilder().setCustomId(`cancel_buy:${event.id}`).setLabel('❌ Skip').setStyle(ButtonStyle.Secondary),
-                );
-
-                this.pendingConfirmations.set(event.id, {
-                    event,
-                    userId: '',
-                    expiresAt: Date.now() + 5 * 60 * 1000,
-                });
-
-                const hasAutoBuy = users.some(u => u.settings.autoBuyEnabled);
                 await channel.send({
                     content: pingContent,
                     embeds: [embed],
-                    components: hasAutoBuy ? [] : [row],
                 });
-
-                // Auto-buy for any user who has it enabled
-                for (const user of users) {
-                    if (user.settings.autoBuyEnabled && this.onConfirmBuy) {
-                        const result = await this.onConfirmBuy(event, 1);
-                        const resultEmbed = formatTradeResult(result, event);
-                        await channel.send({ embeds: [resultEmbed] });
-                    }
-                }
             } catch (e) {
                 logger.error('Failed to send event notification to channel', { error: e });
             }
@@ -900,28 +874,8 @@ export class DiscordBot {
                 const discordUser = await this.findDiscordUser(user.id);
                 if (!discordUser) continue;
 
-                const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-                    new ButtonBuilder().setCustomId(`confirm_buy:${event.id}`).setLabel('✅ Buy').setStyle(ButtonStyle.Success),
-                    new ButtonBuilder().setCustomId(`cancel_buy:${event.id}`).setLabel('❌ Skip').setStyle(ButtonStyle.Secondary),
-                );
-
-                this.pendingConfirmations.set(event.id, {
-                    event,
-                    userId: discordUser.id,
-                    expiresAt: Date.now() + 5 * 60 * 1000,
-                });
-
                 const dm = await discordUser.createDM();
-                await dm.send({
-                    embeds: [embed],
-                    components: user.settings.autoBuyEnabled ? [] : [row],
-                });
-
-                if (user.settings.autoBuyEnabled && this.onConfirmBuy) {
-                    const result = await this.onConfirmBuy(event, 1);
-                    const resultEmbed = formatTradeResult(result, event);
-                    await dm.send({ embeds: [resultEmbed] });
-                }
+                await dm.send({ embeds: [embed] });
             } catch (e) {
                 logger.error('Failed to notify user', { userId: user.id, error: e });
             }
