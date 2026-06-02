@@ -133,10 +133,11 @@ export class DiscordBot {
             new SlashCommandBuilder().setName('help').setDescription('Show help guide'),
             new SlashCommandBuilder().setName('track')
                 .setDescription('Track a wallet')
-                .addStringOption(o => o.setName('address').setDescription('Ethereum wallet address (0x...)').setRequired(true)),
+                .addStringOption(o => o.setName('address').setDescription('Ethereum wallet address (0x...)').setRequired(true))
+                .addStringOption(o => o.setName('name').setDescription('Label for this wallet (e.g. "Vitalik")').setRequired(false)),
             new SlashCommandBuilder().setName('bulk-import')
                 .setDescription('Track multiple wallets at once')
-                .addStringOption(o => o.setName('wallets').setDescription('Comma or newline-separated list of wallet addresses').setRequired(true)),
+                .addStringOption(o => o.setName('wallets').setDescription('Each pair: label on one line, address on the next. Or just addresses separated by commas.').setRequired(true)),
             new SlashCommandBuilder().setName('untrack')
                 .setDescription('Stop tracking a wallet')
                 .addStringOption(o => o.setName('address').setDescription('Ethereum wallet address').setRequired(true)),
@@ -294,6 +295,7 @@ export class DiscordBot {
 
     private async cmdTrack(interaction: ChatInputCommandInteraction): Promise<void> {
         const address = interaction.options.getString('address', true).trim();
+        const label = interaction.options.getString('name')?.trim() || undefined;
 
         if (!address.match(/^0x[a-fA-F0-9]{40}$/)) {
             await interaction.reply({ content: '❌ Invalid Ethereum address format.', flags: ['Ephemeral'] });
@@ -303,10 +305,11 @@ export class DiscordBot {
         const userId = this.discordUserId(interaction);
         this.userDb.getOrCreateUser(userId, interaction.user.username, interaction.user.globalName ?? undefined);
 
-        const result = this.userDb.addWallet(userId, address);
+        const result = this.userDb.addWallet(userId, address, label);
         if (result.success) {
             if (this.onWalletAdded) this.onWalletAdded(address);
-            await interaction.reply({ content: `✅ Now tracking:\n\`${address}\`` });
+            const labelLine = label ? `\n🏷 **${label}**` : '';
+            await interaction.reply({ content: `✅ Now tracking:${labelLine}\n\`${address}\`` });
         } else {
             await interaction.reply({ content: `❌ ${result.error}`, flags: ['Ephemeral'] });
         }
@@ -314,36 +317,60 @@ export class DiscordBot {
 
     // ─── /bulk-import ───────────────────────────────────
 
+    private parseBulkInput(input: string): Array<{ address: string; label?: string }> {
+        const results: Array<{ address: string; label?: string }> = [];
+        const lines = input.split('\n').map(s => s.trim()).filter(Boolean);
+        let pendingLabel: string | undefined;
+
+        for (const line of lines) {
+            // Comma-separated on one line → addresses only (no label support)
+            if (line.includes(',')) {
+                pendingLabel = undefined;
+                for (const part of line.split(',').map(s => s.trim()).filter(Boolean)) {
+                    results.push({ address: part });
+                }
+                continue;
+            }
+            if (/^0x[a-fA-F0-9]{40}$/.test(line)) {
+                results.push({ address: line, label: pendingLabel });
+                pendingLabel = undefined;
+            } else {
+                // Treat as a label for the next address
+                pendingLabel = line;
+            }
+        }
+        return results;
+    }
+
     private async cmdBulkImport(interaction: ChatInputCommandInteraction): Promise<void> {
         const input = interaction.options.getString('wallets', true);
         const userId = this.discordUserId(interaction);
         this.userDb.getOrCreateUser(userId, interaction.user.username, interaction.user.globalName ?? undefined);
 
-        // Split on commas, newlines, or whitespace — filter valid ETH addresses
-        const candidates = input.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
-        const valid = candidates.filter(s => /^0x[a-fA-F0-9]{40}$/.test(s));
-        const invalid = candidates.filter(s => !/^0x[a-fA-F0-9]{40}$/.test(s));
+        const parsed = this.parseBulkInput(input);
+        const validEntries = parsed.filter(e => /^0x[a-fA-F0-9]{40}$/.test(e.address));
+        const invalidEntries = parsed.filter(e => !/^0x[a-fA-F0-9]{40}$/.test(e.address));
 
-        if (valid.length === 0) {
-            await interaction.reply({ content: '❌ No valid Ethereum addresses found. Each address must start with `0x` followed by 40 hex characters.', flags: ['Ephemeral'] });
+        if (validEntries.length === 0) {
+            await interaction.reply({ content: '❌ No valid Ethereum addresses found.\n\nFormat:\n```\nVitalik\n0xd8dA...\nWhale2\n0xAbCd...\n```', flags: ['Ephemeral'] });
             return;
         }
 
         await interaction.deferReply();
 
-        const added: string[] = [];
+        const added: Array<{ address: string; label?: string }> = [];
         const skipped: string[] = [];
         const failed: { address: string; reason: string }[] = [];
 
-        for (const address of valid) {
-            const result = this.userDb.addWallet(userId, address);
+        for (const entry of validEntries) {
+            const result = this.userDb.addWallet(userId, entry.address, entry.label);
             if (result.success) {
-                if (this.onWalletAdded) this.onWalletAdded(address);
-                added.push(address);
+                if (this.onWalletAdded) this.onWalletAdded(entry.address);
+                added.push(entry);
             } else if (result.error?.includes('Already tracking')) {
-                skipped.push(address);
+                skipped.push(entry.address);
             } else {
-                failed.push({ address, reason: result.error || 'Unknown error' });
+                failed.push({ address: entry.address, reason: result.error || 'Unknown error' });
             }
         }
 
@@ -354,7 +381,7 @@ export class DiscordBot {
         if (added.length > 0) {
             embed.addFields({
                 name: `✅ Added (${added.length})`,
-                value: added.map(a => `\`${a}\``).join('\n'),
+                value: added.map(e => e.label ? `**${e.label}** — \`${e.address}\`` : `\`${e.address}\``).join('\n'),
             });
         }
         if (skipped.length > 0) {
@@ -369,10 +396,10 @@ export class DiscordBot {
                 value: failed.map(f => `\`${f.address}\` — ${f.reason}`).join('\n'),
             });
         }
-        if (invalid.length > 0) {
+        if (invalidEntries.length > 0) {
             embed.addFields({
-                name: `⚠️ Invalid format (${invalid.length})`,
-                value: invalid.map(s => `\`${s}\``).join('\n'),
+                name: `⚠️ Invalid format (${invalidEntries.length})`,
+                value: invalidEntries.map(e => `\`${e.address}\``).join('\n'),
             });
         }
 
@@ -404,8 +431,9 @@ export class DiscordBot {
         const wallets = this.userDb.getUserWallets(userId);
         const user = this.userDb.getUser(userId);
         const limit = user ? this.userDb.getWalletLimit(user.tier) : 1;
+        const labels = this.userDb.getWalletLabels(userId);
 
-        const embed = formatWalletList(wallets, limit);
+        const embed = formatWalletList(wallets, limit, labels);
         await interaction.reply({ embeds: [embed] });
     }
 
@@ -788,6 +816,8 @@ export class DiscordBot {
      */
     async sendEventNotification(event: NFTEvent): Promise<void> {
         const users = this.userDb.getUsersTrackingWallet(event.trackedWallet);
+        // Attach wallet label so the formatter can display it
+        event.walletLabel = this.userDb.findWalletLabel(event.trackedWallet);
         const embed = formatNotification(event);
 
         if (this.notificationChannelId) {

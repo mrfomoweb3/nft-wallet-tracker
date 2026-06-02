@@ -77,6 +77,9 @@ export interface NFTEvent {
 
     // Metadata (fetched async)
     metadata?: NFTMetadata;
+
+    // Optional human-readable label for the tracked wallet
+    walletLabel?: string;
 }
 
 /**

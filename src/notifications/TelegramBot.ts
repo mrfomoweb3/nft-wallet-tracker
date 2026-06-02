@@ -140,11 +140,14 @@ export class TelegramBot {
             await ctx.reply('✅ All features are already unlocked!');
         });
 
-        // /track <address>
+        // /track <address> [label]
         this.bot.command('track', async (ctx) => {
-            const address = ctx.match?.trim();
+            const parts = ctx.match?.trim().split(/\s+/) ?? [];
+            const address = parts[0];
+            const label = parts.slice(1).join(' ') || undefined;
+
             if (!address) {
-                await ctx.reply('Usage: `/track 0x123...`', { parse_mode: 'Markdown' });
+                await ctx.reply('Usage: `/track 0x123... WalletName`\nThe name is optional.', { parse_mode: 'Markdown' });
                 return;
             }
 
@@ -153,14 +156,13 @@ export class TelegramBot {
                 return;
             }
 
-            // Auto-register user if they haven't run /start
             this.userDb.getOrCreateUser(ctx.from!.id, ctx.from?.username, ctx.from?.first_name);
 
-            const result = this.userDb.addWallet(ctx.from!.id, address);
+            const result = this.userDb.addWallet(ctx.from!.id, address, label);
             if (result.success) {
-                // Register with blockchain listener for real-time monitoring
                 if (this.onWalletAdded) this.onWalletAdded(address);
-                await ctx.reply(`✅ Now tracking:\n\`${address}\``, { parse_mode: 'Markdown' });
+                const labelLine = label ? `\n🏷 *${label}*` : '';
+                await ctx.reply(`✅ Now tracking:${labelLine}\n\`${address}\``, { parse_mode: 'Markdown' });
             } else {
                 await ctx.reply(`❌ ${result.error}`);
             }
@@ -172,8 +174,9 @@ export class TelegramBot {
             if (!input) {
                 await ctx.reply(
                     '*Bulk Import*\n\n' +
-                    'Usage: `/bulkimport 0x123..., 0x456..., 0x789...`\n\n' +
-                    'Separate addresses with commas, spaces, or new lines.',
+                    'Format — label on one line, address on the next:\n' +
+                    '```\nVitalik\n0xd8dA...\nWhale2\n0xAbCd...\n```\n' +
+                    'Or just addresses separated by commas (no labels).',
                     { parse_mode: 'Markdown' }
                 );
                 return;
@@ -181,34 +184,51 @@ export class TelegramBot {
 
             this.userDb.getOrCreateUser(ctx.from!.id, ctx.from?.username, ctx.from?.first_name);
 
-            const candidates = input.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
-            const valid = candidates.filter(s => /^0x[a-fA-F0-9]{40}$/.test(s));
-            const invalid = candidates.filter(s => !/^0x[a-fA-F0-9]{40}$/.test(s));
+            // Parse label+address pairs
+            const parsed: Array<{ address: string; label?: string }> = [];
+            const lines = input.split('\n').map(s => s.trim()).filter(Boolean);
+            let pendingLabel: string | undefined;
+            for (const line of lines) {
+                if (line.includes(',')) {
+                    pendingLabel = undefined;
+                    for (const part of line.split(',').map(s => s.trim()).filter(Boolean)) {
+                        parsed.push({ address: part });
+                    }
+                } else if (/^0x[a-fA-F0-9]{40}$/.test(line)) {
+                    parsed.push({ address: line, label: pendingLabel });
+                    pendingLabel = undefined;
+                } else {
+                    pendingLabel = line;
+                }
+            }
 
-            if (valid.length === 0) {
+            const validEntries = parsed.filter(e => /^0x[a-fA-F0-9]{40}$/.test(e.address));
+            const invalidEntries = parsed.filter(e => !/^0x[a-fA-F0-9]{40}$/.test(e.address));
+
+            if (validEntries.length === 0) {
                 await ctx.reply('❌ No valid Ethereum addresses found.');
                 return;
             }
 
-            const added: string[] = [];
+            const added: Array<{ address: string; label?: string }> = [];
             const skipped: string[] = [];
             const failed: { address: string; reason: string }[] = [];
 
-            for (const address of valid) {
-                const result = this.userDb.addWallet(ctx.from!.id, address);
+            for (const entry of validEntries) {
+                const result = this.userDb.addWallet(ctx.from!.id, entry.address, entry.label);
                 if (result.success) {
-                    if (this.onWalletAdded) this.onWalletAdded(address);
-                    added.push(address);
+                    if (this.onWalletAdded) this.onWalletAdded(entry.address);
+                    added.push(entry);
                 } else if (result.error?.includes('Already tracking')) {
-                    skipped.push(address);
+                    skipped.push(entry.address);
                 } else {
-                    failed.push({ address, reason: result.error || 'Unknown error' });
+                    failed.push({ address: entry.address, reason: result.error || 'Unknown error' });
                 }
             }
 
             let message = '📥 *Bulk Import Results*\n\n';
             if (added.length > 0) {
-                message += `✅ *Added (${added.length}):*\n${added.map(a => `\`${a}\``).join('\n')}\n\n`;
+                message += `✅ *Added (${added.length}):*\n${added.map(e => e.label ? `*${e.label}* — \`${e.address}\`` : `\`${e.address}\``).join('\n')}\n\n`;
             }
             if (skipped.length > 0) {
                 message += `⏭ *Already tracking (${skipped.length}):*\n${skipped.map(a => `\`${a}\``).join('\n')}\n\n`;
@@ -216,8 +236,8 @@ export class TelegramBot {
             if (failed.length > 0) {
                 message += `❌ *Failed (${failed.length}):*\n${failed.map(f => `\`${f.address}\` — ${f.reason}`).join('\n')}\n\n`;
             }
-            if (invalid.length > 0) {
-                message += `⚠️ *Invalid format (${invalid.length}):*\n${invalid.map(s => `\`${s}\``).join('\n')}`;
+            if (invalidEntries.length > 0) {
+                message += `⚠️ *Invalid format (${invalidEntries.length}):*\n${invalidEntries.map(e => `\`${e.address}\``).join('\n')}`;
             }
 
             await ctx.reply(message.trim(), { parse_mode: 'Markdown' });
@@ -250,15 +270,20 @@ export class TelegramBot {
         // /wallets - List user's wallets
         this.bot.command('wallets', async (ctx) => {
             const wallets = this.userDb.getUserWallets(ctx.from!.id);
+            const labels = this.userDb.getWalletLabels(ctx.from!.id);
 
             if (wallets.length === 0) {
                 await ctx.reply('📭 No wallets tracked.\n\nUse `/track <address>` to add one.', { parse_mode: 'Markdown' });
                 return;
             }
 
+            const lines = wallets.map((w, i) => {
+                const label = labels[w.toLowerCase()];
+                return label ? `${i + 1}. *${label}*\n    \`${w}\`` : `${i + 1}. \`${w}\``;
+            });
+
             await ctx.reply(
-                `👛 *Your Tracked Wallets* (${wallets.length})\n\n` +
-                wallets.map((w, i) => `${i + 1}. \`${w}\``).join('\n'),
+                `👛 *Your Tracked Wallets* (${wallets.length})\n\n` + lines.join('\n'),
                 { parse_mode: 'Markdown' }
             );
         });
@@ -610,6 +635,7 @@ export class TelegramBot {
      */
     async sendEventNotification(event: NFTEvent): Promise<void> {
         const users = this.userDb.getUsersTrackingWallet(event.trackedWallet);
+        event.walletLabel = this.userDb.findWalletLabel(event.trackedWallet);
         const message = formatNotification(event);
 
         for (const user of users) {

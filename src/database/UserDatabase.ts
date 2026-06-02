@@ -27,6 +27,7 @@ export interface User {
     firstName?: string;
     tier: SubscriptionTier;
     wallets: string[];
+    walletLabels: Record<string, string>; // address → label
     priceAlerts: PriceAlert[];
     settings: UserSettings;
     createdAt: number;
@@ -97,6 +98,7 @@ export class UserDatabase {
                 firstName,
                 tier: 'premium',
                 wallets: [],
+                walletLabels: {},
                 priceAlerts: [],
                 settings: { ...DEFAULT_SETTINGS },
                 createdAt: Date.now(),
@@ -122,16 +124,21 @@ export class UserDatabase {
     }
 
     /**
-     * Add wallet to user
+     * Add wallet to user with an optional label
      */
-    addWallet(telegramId: number, wallet: string): { success: boolean; error?: string } {
+    addWallet(telegramId: number, wallet: string, label?: string): { success: boolean; error?: string } {
         const user = this.getUser(telegramId);
         if (!user) return { success: false, error: 'User not found' };
 
         const normalizedWallet = wallet.toLowerCase();
 
-        // Check if already tracking
         if (user.wallets.includes(normalizedWallet)) {
+            // Update label even if already tracking
+            if (label) {
+                if (!user.walletLabels) user.walletLabels = {};
+                user.walletLabels[normalizedWallet] = label;
+                this.save();
+            }
             return { success: false, error: 'Already tracking this wallet' };
         }
 
@@ -140,9 +147,32 @@ export class UserDatabase {
         }
 
         user.wallets.push(normalizedWallet);
+        if (label) {
+            if (!user.walletLabels) user.walletLabels = {};
+            user.walletLabels[normalizedWallet] = label;
+        }
         this.save();
-        logger.info('Wallet added', { telegramId, wallet: normalizedWallet });
+        logger.info('Wallet added', { telegramId, wallet: normalizedWallet, label });
         return { success: true };
+    }
+
+    /**
+     * Find the first label any user has assigned to a wallet address
+     */
+    findWalletLabel(wallet: string): string | undefined {
+        const normalized = wallet.toLowerCase();
+        for (const user of Object.values(this.data.users)) {
+            const label = user.walletLabels?.[normalized];
+            if (label) return label;
+        }
+        return undefined;
+    }
+
+    /**
+     * Get all wallet labels for a user as a map
+     */
+    getWalletLabels(telegramId: number): Record<string, string> {
+        return this.getUser(telegramId)?.walletLabels ?? {};
     }
 
     /**

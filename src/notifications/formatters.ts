@@ -41,8 +41,11 @@ export function formatNotification(event: NFTEvent): string {
     lines.push('');
     lines.push(`━━━━━━━━━━━━━━━━━━━━`);
 
-    // Wallet info
-    lines.push(`👛 *Tracked Wallet:* \`${shortenAddress(event.trackedWallet)}\``);
+    // Wallet info — show label if available
+    const walletDisplay = event.walletLabel
+        ? `*${event.walletLabel}* (\`${shortenAddress(event.trackedWallet)}\`)`
+        : `\`${shortenAddress(event.trackedWallet)}\``;
+    lines.push(`👛 *Tracked Wallet:* ${walletDisplay}`);
 
     // From/To
     if (event.type === 'buy' || event.type === 'mint') {
@@ -96,7 +99,7 @@ export function formatTradeResult(result: TradeResult, event: NFTEvent): string 
 /**
  * Format wallet list for display
  */
-export function formatWalletList(wallets: string[]): string {
+export function formatWalletList(wallets: string[], labels: Record<string, string> = {}): string {
     if (wallets.length === 0) {
         return '📭 No wallets being tracked.';
     }
@@ -104,7 +107,12 @@ export function formatWalletList(wallets: string[]): string {
     const lines = [
         '📋 *Tracked Wallets*',
         '',
-        ...wallets.map((w, i) => `${i + 1}. \`${w}\``),
+        ...wallets.map((w, i) => {
+            const label = labels[w.toLowerCase()];
+            return label
+                ? `${i + 1}. *${label}*\n    \`${w}\``
+                : `${i + 1}. \`${w}\``;
+        }),
         '',
         `Total: ${wallets.length} wallet(s)`,
     ];

@@ -41,10 +41,11 @@ export function formatNotification(event: NFTEvent): EmbedBuilder {
     // Token standard
     embed.addFields({ name: '📋 Standard', value: event.tokenStandard, inline: true });
 
-    // Wallet info
-    embed.addFields(
-        { name: '👛 Tracked Wallet', value: `\`${shortenAddress(event.trackedWallet)}\``, inline: false },
-    );
+    // Wallet info — show label if available
+    const walletDisplay = event.walletLabel
+        ? `**${event.walletLabel}** (\`${shortenAddress(event.trackedWallet)}\`)`
+        : `\`${shortenAddress(event.trackedWallet)}\``;
+    embed.addFields({ name: '👛 Tracked Wallet', value: walletDisplay, inline: false });
 
     // From/To
     if (event.type === 'buy' || event.type === 'mint') {
@@ -108,7 +109,7 @@ export function formatTradeResult(result: TradeResult, event: NFTEvent): EmbedBu
 /**
  * Format wallet list as a Discord embed
  */
-export function formatWalletList(wallets: string[], limit: number): EmbedBuilder {
+export function formatWalletList(wallets: string[], limit: number, labels: Record<string, string> = {}): EmbedBuilder {
     const embed = new EmbedBuilder()
         .setTitle(`👛 Your Tracked Wallets (${wallets.length}/${limit})`)
         .setColor(Colors.Blue);
@@ -116,7 +117,14 @@ export function formatWalletList(wallets: string[], limit: number): EmbedBuilder
     if (wallets.length === 0) {
         embed.setDescription('📭 No wallets tracked.\n\nUse `/track` to add one.');
     } else {
-        embed.setDescription(wallets.map((w, i) => `${i + 1}. \`${w}\``).join('\n'));
+        embed.setDescription(
+            wallets.map((w, i) => {
+                const label = labels[w.toLowerCase()];
+                return label
+                    ? `${i + 1}. **${label}**\n    \`${w}\``
+                    : `${i + 1}. \`${w}\``;
+            }).join('\n')
+        );
     }
 
     return embed;
