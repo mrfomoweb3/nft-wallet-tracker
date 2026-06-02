@@ -12,6 +12,10 @@ import {
     EmbedBuilder,
     Colors,
     TextChannel,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+    ModalSubmitInteraction,
 } from 'discord.js';
 import { NFTEvent, TradeResult } from '../types/index.js';
 import { Config } from '../config/index.js';
@@ -86,6 +90,8 @@ export class DiscordBot {
                 await this.handleCommand(interaction);
             } else if (interaction.isButton()) {
                 await this.handleButton(interaction);
+            } else if (interaction.isModalSubmit()) {
+                await this.handleModalSubmit(interaction);
             }
         });
     }
@@ -136,8 +142,7 @@ export class DiscordBot {
                 .addStringOption(o => o.setName('address').setDescription('Ethereum wallet address (0x...)').setRequired(true))
                 .addStringOption(o => o.setName('name').setDescription('Label for this wallet (e.g. "Vitalik")').setRequired(false)),
             new SlashCommandBuilder().setName('bulk-import')
-                .setDescription('Track multiple wallets at once')
-                .addStringOption(o => o.setName('wallets').setDescription('Each pair: label on one line, address on the next. Or just addresses separated by commas.').setRequired(true)),
+                .setDescription('Track multiple wallets at once — opens a popup to paste your list'),
             new SlashCommandBuilder().setName('untrack')
                 .setDescription('Stop tracking a wallet')
                 .addStringOption(o => o.setName('address').setDescription('Ethereum wallet address').setRequired(true)),
@@ -343,20 +348,26 @@ export class DiscordBot {
     }
 
     private async cmdBulkImport(interaction: ChatInputCommandInteraction): Promise<void> {
-        const input = interaction.options.getString('wallets', true);
-        const userId = this.discordUserId(interaction);
-        this.userDb.getOrCreateUser(userId, interaction.user.username, interaction.user.globalName ?? undefined);
+        const modal = new ModalBuilder()
+            .setCustomId('bulk_import_modal')
+            .setTitle('Bulk Import Wallets');
 
+        const textInput = new TextInputBuilder()
+            .setCustomId('wallets_input')
+            .setLabel('Label (optional) then address, one per line')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('Vitalik\n0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045\nWhale2\n0xAbCd1234...')
+            .setRequired(true)
+            .setMaxLength(4000);
+
+        modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(textInput));
+        await interaction.showModal(modal);
+    }
+
+    private async processBulkImport(userId: number, _username: string, input: string): Promise<EmbedBuilder> {
         const parsed = this.parseBulkInput(input);
         const validEntries = parsed.filter(e => /^0x[a-fA-F0-9]{40}$/.test(e.address));
         const invalidEntries = parsed.filter(e => !/^0x[a-fA-F0-9]{40}$/.test(e.address));
-
-        if (validEntries.length === 0) {
-            await interaction.reply({ content: '❌ No valid Ethereum addresses found.\n\nFormat:\n```\nVitalik\n0xd8dA...\nWhale2\n0xAbCd...\n```', flags: ['Ephemeral'] });
-            return;
-        }
-
-        await interaction.deferReply();
 
         const added: Array<{ address: string; label?: string }> = [];
         const skipped: string[] = [];
@@ -403,6 +414,19 @@ export class DiscordBot {
             });
         }
 
+        return embed;
+    }
+
+    private async handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
+        if (interaction.customId !== 'bulk_import_modal') return;
+
+        await interaction.deferReply();
+
+        const input = interaction.fields.getTextInputValue('wallets_input');
+        const userId = this.snowflakeToNumericId(interaction.user.id);
+        this.userDb.getOrCreateUser(userId, interaction.user.username, interaction.user.globalName ?? undefined);
+
+        const embed = await this.processBulkImport(userId, interaction.user.username, input);
         await interaction.editReply({ embeds: [embed] });
     }
 
